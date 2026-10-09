@@ -81,6 +81,22 @@
           ".validate": false
         }
       }
+    },
+    "costs": {
+      ".read": "(auth != null && (auth.uid === '0tHtzXD03GVYzbcvTj1W7o6duX22' || auth.uid === '83bTq7Iim4Y9qa9kHocbzskAze12' || root.child('staff').child(auth.uid).exists()))",
+      ".write": "(auth != null && (auth.uid === '0tHtzXD03GVYzbcvTj1W7o6duX22' || auth.uid === '83bTq7Iim4Y9qa9kHocbzskAze12' || root.child('staff').child(auth.uid).exists()))",
+      "$id": {
+        ".validate": "newData.hasChildren() && $id.length <= 40",
+        "cost": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 500000 && newData.val() % 1 === 0"
+        },
+        "stock": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99999 && newData.val() % 1 === 0"
+        },
+        "$other": {
+          ".validate": "false"
+        }
+      }
     }
   }
 }

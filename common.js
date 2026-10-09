@@ -1,12 +1,14 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref, onValue, push, set, update, remove, get, runTransaction, goOffline, goOnline, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { initializeAuth, browserSessionPersistence, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
 
 export const configured = !String(firebaseConfig.apiKey).startsWith("여기");
 const fbApp = initializeApp(configured ? firebaseConfig : { apiKey: "x", databaseURL: "https://x-default-rtdb.firebaseio.com", projectId: "x", appId: "x" });
 export const db = getDatabase(fbApp);
-export const auth = getAuth(fbApp);
+// 로그인 정보를 "이 탭"에만 보관해요(탭·브라우저를 닫으면 로그아웃). 예전처럼 기기에 계속 남겨 두면, 직원이 아닌 사람이 같은 기기에서 링크를 열 때 로그인된 채로 보일 수 있어요.
+// 손님 페이지(index.html)는 로그인을 쓰지 않으므로 같은 기기에 직원 로그인이 남아 있어도 항상 비로그인 손님으로 동작해요.
+export const auth = initializeAuth(fbApp, { persistence: browserSessionPersistence });
 export { ref, onValue, push, set, update, remove, get, runTransaction, signOut, goOffline, goOnline, serverTimestamp };
 
 export const $ = (s, r = document) => r.querySelector(s);
@@ -43,6 +45,10 @@ export function categories(menu) {
   menu.forEach((m) => { const k = m.cat || "기타"; if (!c.includes(k)) c.push(k); });
   return c;
 }
+// 단위는 메뉴의 "분류"로 정해져요(고정). 주류 → 병, 메인·사이드·안주 → 인분, 그 밖(음료 등) → 개.
+// 분류 이름에 아래 낱말이 들어 있으면 해당 단위가 돼요. 바꾸려면 이 표만 고치면 돼요.
+const UNIT_RULES = [[/주류|술|맥주|소주|와인/, "병"], [/메인|사이드|안주|식사|요리/, "인분"]];
+export const unitFor = (cat) => { const c = String(cat || ""); const r = UNIT_RULES.find(([re]) => re.test(c)); return r ? r[1] : "개"; };
 export const sumItems = (items) => (items || []).reduce((a, x) => a + x.price * x.qty, 0);
 
 // 주문은 손님 기기에서 온 데이터라서 믿지 않아요. 화면에 넣기 전에 글자·숫자 모양을 강제로 맞춰요.
@@ -77,19 +83,40 @@ export function copyText(txt, label) {
   navigator.clipboard.writeText(String(txt)).then(() => toast((label || "복사") + " 완료"), () => toast("길게 눌러서 직접 복사해 주세요"));
 }
 
+// ---- 소리 (주방 화면에서만 써요) ----
+// 브라우저는 사용자가 화면을 터치하기 전에는 소리를 막아요. 그래서 주방 화면에 "소리 켜기" 버튼을 두고, soundOn()으로 켜졌는지 확인해요.
 let actx = null;
-document.addEventListener("click", () => {
-  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); } catch {}
-});
-// 새 주문은 높은 소리 한 번, 경고는 낮은 소리 여러 번이에요.
+const AC = window.AudioContext || window.webkitAudioContext;
+const ctx = () => { try { actx = actx || new AC(); return actx; } catch { return null; } };
+document.addEventListener("click", () => { const c = ctx(); if (c && c.state !== "running") c.resume().catch(() => {}); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && actx && actx.state !== "running") actx.resume().catch(() => {}); });
+export const soundOn = () => !!actx && actx.state === "running";
+export async function enableSound() {
+  const c = ctx(); if (!c) return false;
+  try { await c.resume(); } catch {}
+  if (c.state === "running") tone(1047, 0, 0.18, 0.6); // 켜졌는지 바로 들려줘요
+  return c.state === "running";
+}
+// 짧은 소리 하나. 시작·끝에 볼륨을 부드럽게 올리고 내려서 "틱" 소리가 안 나게 해요.
+function tone(freq, delay, dur, vol, type = "square") {
+  const c = actx; if (!c) return;
+  const o = c.createOscillator(), g = c.createGain(), at = c.currentTime + delay;
+  o.type = type; o.frequency.value = freq; o.connect(g); g.connect(c.destination);
+  g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.01); g.gain.setValueAtTime(vol, at + dur - 0.03); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.start(at); o.stop(at + dur + 0.02);
+}
+// 새 주문: "띵-동" 3번(약 2초). 시끄러운 주점에서도 들리게 사각파·높은 볼륨이에요. 기기 볼륨도 키워 두세요.
+export function orderAlarm() {
+  try {
+    if (!soundOn()) return;
+    for (let i = 0; i < 3; i++) { tone(1175, i * 0.75, 0.3, 0.85); tone(1568, i * 0.75 + 0.33, 0.38, 0.85); }
+  } catch {}
+}
+// 경고(연결 끊김): 낮은 소리 여러 번.
 export function beep(freq = 880, times = 1) {
   try {
-    if (!actx) return;
-    for (let i = 0; i < times; i++) {
-      const o = actx.createOscillator(), g = actx.createGain(), at = actx.currentTime + i * 0.4;
-      o.frequency.value = freq; g.gain.value = 0.15; o.connect(g); g.connect(actx.destination);
-      o.start(at); o.stop(at + 0.25);
-    }
+    if (!soundOn()) return;
+    for (let i = 0; i < times; i++) tone(freq, i * 0.45, 0.3, 0.6);
   } catch {}
 }
 
@@ -99,14 +126,15 @@ export function setupWarning(root) {
 
 // 연결 상태 배너. 서버와 끊기면 화면 맨 위에 크게 알려요.
 // - paused: 일부러 연결을 끊어 둔 상태(손님 화면의 접속 절약)면 true를 돌려주는 함수. 이때는 배너를 띄우지 않아요.
-// - staff: 직원 화면이면 true. 경과 시간과 경고음, 그리고 아래의 "응답 확인"이 추가돼요.
+// - staff: 직원 화면이면 true. 경과 시간과 아래의 "응답 확인"이 추가돼요.
+// - sound: 연결이 끊길 때 경고음을 낼지(주방만 true. 카운터는 소리 없이 빨간 배너만 떠요).
 // - role: 직원 화면 이름("counter"/"kitchen"). 응답 확인용 값을 쓰는 자리 이름이에요.
 const GRACE_MS = 4000;        // 이 시간 안에 다시 붙으면 배너를 띄우지 않아요(순간 끊김 무시)
 const FIRST_GRACE_MS = 8000;  // 페이지를 처음 열 때는 접속에 시간이 걸릴 수 있어 조금 더 기다려요
 const PING_EVERY_MS = 20000;  // 직원 화면이 서버에 응답을 확인하는 간격
 const PING_LATE_MS = 10000;   // 이 시간 안에 응답이 없으면 끊긴 것으로 봐요
 const RETRY_EVERY_MS = 15000; // 끊겨 있는 동안 연결을 새로 시도하는 간격
-export function watchConnection({ staff = false, role = "", paused = () => false } = {}) {
+export function watchConnection({ staff = false, role = "", paused = () => false, sound = false } = {}) {
   const el = document.createElement("div");
   el.className = "offline"; el.setAttribute("role", "alert"); el.hidden = true;
   document.body.prepend(el);
@@ -130,7 +158,7 @@ export function watchConnection({ staff = false, role = "", paused = () => false
     }
     if (show !== shown) {
       shown = show; el.hidden = !show; document.body.classList.toggle("is-offline", show);
-      if (show) { kickedAt = Date.now(); document.documentElement.style.setProperty("--offh", el.offsetHeight + "px"); if (staff) beep(330, 3); }
+      if (show) { kickedAt = Date.now(); document.documentElement.style.setProperty("--offh", el.offsetHeight + "px"); if (staff && sound) beep(330, 3); }
       else if (connected && !stalled) toast("다시 연결됐어요");
     }
     // 끊긴 채로 오래 있으면 브라우저가 재시도 간격을 몇 분까지 늘려요. 그래서 배너가 떠 있는 동안은 15초마다 직접 다시 시도해요.

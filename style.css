@@ -166,6 +166,12 @@ details>summary{cursor:pointer;font-weight:700;padding-block:6px;color:var(--bro
 .ticket.late .el{color:var(--bad);font-weight:700}
 .ticket .btn{font-family:var(--f-read);font-size:16px}
 
+/* 주방: 소리 꺼짐 안내(크게), 새 주문서 깜빡임 */
+.btn.snd{width:100%;margin-block:4px 10px;min-height:56px;font-family:var(--f-read);font-size:18px;background:linear-gradient(180deg,#e6a49c 0%,#bb3a30 50%,#8f241c 52%,#cb5a50 100%);border-color:#6a1812}
+.ticket.fresh{animation:fresh .9s ease-in-out 9}
+@keyframes fresh{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:0 0 0 6px #e8a317,var(--shadow);transform:scale(1.015)}}
+@media (prefers-reduced-motion:reduce){.ticket.fresh{animation:none;border-color:#e8a317;border-width:4px}}
+
 /* 연결 끊김 배너: 화면 맨 위에 고정. 눈에 띄어야 해서 이 부분만 빨간색이에요. */
 .offline{position:fixed;top:0;left:0;right:0;z-index:70;background:var(--bad);color:#fff;border-bottom:3px solid #6a1812;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;gap:2px;text-align:center;font-family:var(--f-read);font-size:14px;line-height:1.4}
 .offline[hidden]{display:none}
@@ -189,10 +195,84 @@ details>summary{cursor:pointer;font-weight:700;padding-block:6px;color:var(--bro
 .tbl span{font-size:12px;font-weight:700;color:var(--muted2)}
 .tbl b{font-family:var(--f-display);font-size:22px;color:var(--brown-d)}
 
+/* 정산표 */
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl2{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.tbl2 th,.tbl2 td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.tbl2 th{font-size:12px;color:var(--muted2);background:var(--surface2)}
+.tbl2 .r{text-align:right}
+.tbl2 tfoot td{font-weight:900;border-top:2px solid var(--brown);border-bottom:0}
+.tbl2 .cin{min-width:96px;min-height:38px;padding:6px 8px;text-align:right}
+.neg{color:var(--bad)}
+.report{margin-top:14px}
+.rhead{display:flex;flex-direction:column;gap:2px}
+.rtitle{font-family:var(--f-display);font-size:22px;color:var(--brown-d)}
+.sumgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px 28px}
+
 /* 직원 등록 안내 */
 .guide{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px}
 .uid{font-family:var(--f-mono);font-size:13px;overflow-wrap:anywhere;user-select:all;-webkit-user-select:all}
 
 @media (max-width:420px){.who{grid-template-columns:1fr}.mrow{grid-template-columns:1fr 1fr}.mrow .nmf{grid-column:1/-1}.hero h1{font-size:33px}}
-@media print{body{background:#fff}body::after{display:none}.tabs,.bar,.toast,.noprint,.offline{display:none!important}.is-offline #app{padding-top:0}.qr{color:#000}.hero,.sec>h3{color:#000;text-shadow:none}}
+@media print{body.print-report #app>*:not(.report){display:none!important}body.print-report .report{border:0;box-shadow:none;margin:0;padding:0}body.print-report .tw{overflow:visible}body.print-report .tbl2{font-size:12px}body{background:#fff}body::after{display:none}.tabs,.bar,.toast,.noprint,.offline{display:none!important}.is-offline #app{padding-top:0}.qr{color:#000}.hero,.sec>h3{color:#000;text-shadow:none}}
 @media (prefers-reduced-motion:no-preference){.btn,.step button{transition:transform .08s}.btn:active,.step button:active{transform:translateY(2px)}}
+
+/* ===== 아이패드(카운터·주방) 보강: 손님 화면(.wide 아님)에는 영향 없음 ===== */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+.wide{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}
+.wide button,.wide .btn,.wide .tabs button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+/* iOS는 글자 16px 미만 입력칸을 누르면 화면을 확대해 버려요. 표 안의 입력칸도 16px로 고정해요. */
+.wide input,.wide select{font-size:16px}
+.wide .tabs{padding-top:max(10px,env(safe-area-inset-top,0px));padding-inline:env(safe-area-inset-left,0px) env(safe-area-inset-right,0px)}
+.wide #app{padding-inline:max(16px,env(safe-area-inset-left,0px)) max(16px,env(safe-area-inset-right,0px));padding-bottom:max(120px,calc(40px + env(safe-area-inset-bottom,0px)))}
+@media (min-width:700px){
+  .wide #app{max-width:1280px;padding-inline:max(24px,env(safe-area-inset-left,0px)) max(24px,env(safe-area-inset-right,0px))}
+  .wide .bar>div{max-width:1280px}
+  .wide .tabs{gap:10px}
+  .wide .tabs button{min-height:52px;padding:10px 22px;font-size:17px}
+  .wide .btn{min-height:54px;font-size:17px;padding:12px 26px}
+  .wide .btn.sm{min-height:48px;font-size:15px;padding:8px 18px}
+  .wide .fld input,.wide .inp{min-height:52px;font-size:18px}
+  .wide .pill{font-size:15px;padding:6px 16px}
+  .wide .sec>h3{font-size:26px}
+  .wide .grid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px}
+  .wide .ord .no{font-size:30px}
+  .wide .amount{font-size:38px}
+  .wide .lines li{font-size:17px}
+  .wide .tblf input{font-size:26px;min-height:60px}
+  .wide .chk{min-height:48px;font-size:16px}.wide .chk input{width:24px;height:24px}
+  .wide .mrow{grid-template-columns:1fr 2fr 1fr}
+  .wide .tbl2{font-size:16px}.wide .tbl2 th{font-size:14px}.wide .tbl2 th,.wide .tbl2 td{padding:10px 12px}
+  .wide .tbl2 .cin{min-height:48px;min-width:120px}
+  .wide .total{font-size:32px}
+  /* 주방: 멀리서도 읽히게 크게 */
+  .wide .tickets{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
+  .wide .ticket .tno{font-size:64px}
+  .wide .ticket .where{font-size:24px}
+  .wide .ticket li{font-size:28px}
+  .wide .ticket li b{font-size:36px}
+  .wide .ticket .el{font-size:17px}
+  .wide .ticket .btn{min-height:68px;font-size:22px}
+  .wide .btn.snd{min-height:72px;font-size:22px}
+}
+/* 아이패드 가로(넓은 화면): 주방은 한 줄에 3장 */
+@media (min-width:1000px){.wide .tickets{grid-template-columns:repeat(3,1fr)}.wide .grid{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:1280px){.wide .grid{grid-template-columns:repeat(3,1fr)}}
+/* 손가락으로 쓰는 화면에서는 hover 효과 대신 눌림 효과만 */
+@media (hover:none){.btn:active,.tabs button:active{filter:brightness(.92)}}
+
+/* 주방 주문서: 테이블 번호를 맨 위에 크게, 주문번호는 작게 옆으로 */
+.ticket .ttable{font-family:var(--f-read);font-weight:900;font-size:56px;line-height:1.05;color:var(--brown-d);overflow-wrap:anywhere}
+.ticket.late .ttable{color:var(--bad)}
+.ticket .tno{font-size:16px;font-weight:700;color:var(--muted2);line-height:1.3}
+.ticket.late .tno{color:var(--bad)}
+.ticket .where{font-size:16px;font-weight:700;color:var(--muted2)}
+@media (min-width:700px){.wide .ticket .ttable{font-size:84px}.wide .ticket .tno{font-size:20px}.wide .ticket .where{font-size:20px}}
+.ticket .ttable{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.ticket .tppl{font-size:.45em;font-weight:900;color:var(--brown);background:#f3e6cf;border:2px solid var(--brown);border-radius:12px;padding:0 12px;line-height:1.35}
+
+/* 주방 주문서 메뉴 줄: "제육볶음  2인분" */
+.ticket li{justify-content:space-between;align-items:baseline;gap:14px}
+.ticket li .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.ticket li b{min-width:0;text-align:right;white-space:nowrap;font-size:30px}
+@media (min-width:700px){.wide .ticket li b{font-size:40px}.wide .ticket li{font-size:30px}}

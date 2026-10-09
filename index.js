@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=6";
+import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=7";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -11,6 +11,17 @@ const ls = {
   get(k) { try { return localStorage.getItem("pub_" + k) || ""; } catch { return ""; } },
   set(k, v) { try { localStorage.setItem("pub_" + k, v); } catch {} },
 };
+// 링크·QR로 새로 들어오면(주소 입력, 링크 클릭, QR 스캔) 이 기기에 남은 이전 입금자명과 "내 주문" 기록을 지우고 빈 화면으로 시작해요.
+// 새로고침·뒤로가기는 지우지 않아서, 주문한 뒤 새로고침해도 진행 상황이 유지돼요.
+// false로 바꾸면 새로 들어와도 "내 주문" 기록은 남겨요(주문 직후 창을 닫았다가 다시 열어도 송금 안내를 다시 볼 수 있어요).
+const RESET_ORDER_ON_VISIT = true;
+(function freshVisit() {
+  let fresh = true;
+  try { const n = performance.getEntriesByType("navigation")[0]; fresh = !n || n.type === "navigate"; } catch {}
+  if (!fresh) return;
+  ls.set("nick", "");
+  if (RESET_ORDER_ON_VISIT) ls.set("order", "");
+})();
 const st = {
   menu: [], cfg: { pub: "경영상회", tables: 12 }, cart: {},
   nick: ls.get("nick"), people: "",
@@ -22,6 +33,19 @@ try {
 } catch {}
 let unsubStatus = null;
 
+// 입금이 확인돼 "주방 접수"가 되면, 이 시간(초) 뒤에 자동으로 처음 화면(메뉴)으로 돌아가요. 0이면 자동으로 돌아가지 않아요.
+const AUTO_HOME_SEC = 10;
+let homeTimer = 0, homeLeft = 0;
+function stopHome() { clearInterval(homeTimer); homeTimer = 0; }
+function startHome() {
+  if (!AUTO_HOME_SEC || homeTimer) return;
+  homeLeft = AUTO_HOME_SEC;
+  homeTimer = setInterval(() => {
+    homeLeft--;
+    if (homeLeft <= 0) { stopHome(); st.cart = {}; st.notice = ""; dropOrder(); render(); return; }
+    const el = document.getElementById("home-left"); if (el) el.textContent = homeLeft;
+  }, 1000);
+}
 const accepted = () => { const s = st.stat && st.stat.s; return s === "cooking" || s === "done"; };
 
 // 송금 링크는 직원이 카운터에 붙여 넣은 값이에요. 토스·카카오페이 주소만 허용하고, 그 밖의 주소나 scheme은 버려요.
@@ -41,7 +65,7 @@ function watchStatus() {
   if (!st.order) return;
   unsubStatus = onValue(ref(db, "status/" + st.order.id), (s) => { st.stat = s.val(); render(); });
 }
-function dropOrder() { st.order = null; ls.set("order", ""); watchStatus(); }
+function dropOrder() { stopHome(); st.order = null; ls.set("order", ""); watchStatus(); }
 // 지난 영업일의 주문이나, 카운터에서 "주문 모두 지우기"를 한 뒤에 남은 주문 기록은 버려요.
 // (안 버리면 지워진 주문의 송금 안내가 계속 보여서 손님이 없는 주문에 돈을 보낼 수 있어요.)
 function dropStaleOrder() {
@@ -97,6 +121,7 @@ function orderView() {
   const o = st.order, s = st.stat && st.stat.s;
   // 조리 완료는 손님에게 알리지 않아요. 입금이 확인되면 "주방 접수"까지만 보여줘요.
   const ok = accepted();
+  if (ok) startHome(); else stopHome();
   const stage = ok ? 2 : 0;
   const names = ["입금 확인", "주방 접수"];
   const track = s === "cancelled" ? "" : `<div class="track" aria-label="진행 상황">${names.map((t, i) => `<span class="${i < stage ? "past" : i === stage ? "on" : ""}">${t}</span>`).join("")}</div>`;
@@ -120,7 +145,8 @@ function orderView() {
         `<p class="warn">${st.cfgLoaded ? "계좌 정보가 아직 등록되지 않았어요. 직원에게 문의해 주세요." : "계좌 정보를 불러오는 중이에요…"}</p>`) + "</div></li>" +
       '<li><div><b>기다리기</b><p class="note">직원이 입금을 확인하면 주방으로 넘어가요. 이 화면을 닫지 않아도, 다시 열면 내 주문이 그대로 있어요.</p></div></li></ol>';
   }
-  h += `<div class="row" style="margin-top:12px"><button class="btn alt" data-act="newOrder">${s === "cancelled" ? "새 주문 하기" : "추가 주문 하기"}</button></div>`;
+  if (ok && AUTO_HOME_SEC) h += `<p class="note" style="margin-top:12px">주문이 끝났어요. <b id="home-left">${homeLeft || AUTO_HOME_SEC}</b>초 뒤에 처음 화면으로 돌아가요.</p>`;
+  h += `<div class="row" style="margin-top:12px"><button class="btn alt" data-act="newOrder">${s === "cancelled" ? "새 주문 하기" : ok && AUTO_HOME_SEC ? "지금 처음 화면으로" : "추가 주문 하기"}</button></div>`;
   return h;
 }
 
