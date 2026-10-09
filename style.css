@@ -178,6 +178,17 @@ details>summary{cursor:pointer;font-weight:700;padding-block:6px;color:var(--bro
 .ord.unpaid.late::before{content:"입금 대기 · 확인 필요.exe";background:linear-gradient(180deg,#e0857b,#a82a22)}
 .pill.bad{background:var(--bad);color:#fff;border-color:#7a1d17}
 
+/* 카운터: 입금 대기 카드의 테이블 입력 */
+.tblf>span em{font-style:normal;font-weight:500;color:var(--muted)}
+.tblf input{font-family:var(--f-num);font-size:20px;font-weight:700}
+.qrs.one{grid-template-columns:minmax(180px,260px)}
+.qrs.one .qr .box{max-width:260px}
+
+/* (예전) 손님 화면의 주문 테이블 표시 */
+.tbl{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-block:8px 4px;background:var(--cream);border:2px solid var(--brown);border-radius:10px;padding:8px 14px;box-shadow:inset 2px 2px 0 rgba(70,48,31,.1)}
+.tbl span{font-size:12px;font-weight:700;color:var(--muted2)}
+.tbl b{font-family:var(--f-display);font-size:22px;color:var(--brown-d)}
+
 /* 직원 등록 안내 */
 .guide{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px}
 .uid{font-family:var(--f-mono);font-size:13px;overflow-wrap:anywhere;user-select:all;-webkit-user-select:all}

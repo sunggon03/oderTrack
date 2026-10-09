@@ -13,6 +13,10 @@ export const $ = (s, r = document) => r.querySelector(s);
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 export const won = (n) => Number(n || 0).toLocaleString("ko-KR") + "원";
 export const hhmm = (t) => new Date(t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+// 테이블 표기. 손님은 테이블을 고르지 않아서 주문이 들어올 때는 "미정"이고, 직원이 입금 확인할 때 번호를 정해요.
+export const TABLE_PENDING = "미정";
+export const tableText = (t) => { t = String(t ?? "").trim(); return !t || t === TABLE_PENDING ? "테이블 미정" : /^[0-9]+$/.test(t) ? t + "번" : t; };
+export const peopleText = (n) => (Number.isFinite(n) && n >= 1 ? n + "명" : "");
 export const clone = (o) => JSON.parse(JSON.stringify(o));
 
 // 기기 시계가 틀려도 경과 시간이 맞도록 서버 시계를 기준으로 계산해요.
@@ -59,6 +63,7 @@ export function cleanOrder(id, o) {
     status: STATUSES.includes(o.status) ? o.status : "unpaid",
     createdAt: num(o.createdAt), paidAt: o.paidAt == null ? null : num(o.paidAt), doneAt: o.doneAt == null ? null : num(o.doneAt),
     seq: o.seq == null ? null : num(o.seq),
+    people: o.people == null ? null : Math.min(99, Math.floor(num(o.people))),
   };
 }
 export const ordersArray = (val) => Object.entries(val && typeof val === "object" ? val : {}).map(([id, o]) => cleanOrder(id, o));

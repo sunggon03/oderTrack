@@ -1,4 +1,4 @@
-import { db, auth, ref, onValue, update, serverTimestamp, serverNow, signOut, needLogin, $, esc, hhmm, toast, beep, configured, setupWarning, ordersArray, watchConnection, keepAwake, RULES_OLD_WARNING } from "./common.js?v=2";
+import { tableText, peopleText, db, auth, ref, onValue, update, serverTimestamp, serverNow, signOut, needLogin, $, esc, hhmm, toast, beep, configured, setupWarning, ordersArray, watchConnection, keepAwake, RULES_OLD_WARNING } from "./common.js?v=5";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -9,7 +9,7 @@ function ticket(o) {
   const mins = Math.max(0, Math.floor((serverNow() - (o.paidAt || o.createdAt)) / 60000));
   const late = o.status === "cooking" && mins >= 15;
   return `<article class="ticket${late ? " late" : ""}">
-    <div class="tmeta"><span class="tno">${esc(o.seq ?? "-")}</span><span class="where">${esc(o.table)}${o.table === "포장" ? "" : "번"} · ${esc(o.nick)}</span></div>
+    <div class="tmeta"><span class="tno">${esc(o.seq ?? "-")}</span><span class="where">${esc(tableText(o.table))} · ${esc(o.nick)}${peopleText(o.people) ? " · " + esc(peopleText(o.people)) : ""}</span></div>
     <ul>${o.items.map((x) => `<li><b>${esc(x.qty)}</b><span>${esc(x.name)}</span></li>`).join("")}</ul>
     <div class="el">${hhmm(o.paidAt || o.createdAt)} 접수 · ${mins}분 경과</div>
     ${o.status === "cooking"

@@ -1,4 +1,4 @@
-import { db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=2";
+import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=5";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -11,10 +11,9 @@ const ls = {
   get(k) { try { return localStorage.getItem("pub_" + k) || ""; } catch { return ""; } },
   set(k, v) { try { localStorage.setItem("pub_" + k, v); } catch {} },
 };
-const P = new URLSearchParams(location.search);
 const st = {
   menu: [], cfg: { pub: "경영상회", tables: 12 }, cart: {},
-  table: P.get("t") || ls.get("table"), nick: ls.get("nick"),
+  nick: ls.get("nick"), people: "",
   order: null, stat: null, sending: false, slow: false, notice: "", loaded: false, cfgLoaded: false,
 };
 try {
@@ -24,7 +23,17 @@ try {
 let unsubStatus = null;
 
 const accepted = () => { const s = st.stat && st.stat.s; return s === "cooking" || s === "done"; };
-const validTable = (t) => t === "포장" || (/^[1-9][0-9]?$/.test(String(t)) && Number(t) <= (st.cfg.tables || 0));
+
+// 송금 링크는 직원이 카운터에 붙여 넣은 값이에요. 토스·카카오페이 주소만 허용하고, 그 밖의 주소나 scheme은 버려요.
+function payLink(raw, hosts, amount) {
+  try {
+    const u = new URL(String(raw || "").trim());
+    if (u.protocol !== "https:" || !hosts.includes(u.hostname)) return "";
+    // toss.me/아이디 처럼 금액이 없는 토스 링크에는 금액을 이어 붙여요.
+    if (u.hostname === "toss.me" && amount > 0) { const seg = u.pathname.split("/").filter(Boolean); if (seg.length === 1) u.pathname = "/" + seg[0] + "/" + amount; }
+    return u.href;
+  } catch { return ""; }
+}
 
 function watchStatus() {
   if (unsubStatus) { unsubStatus(); unsubStatus = null; }
@@ -54,7 +63,6 @@ document.addEventListener("visibilitychange", syncConn);
 
 onValue(ref(db, "settings"), (s) => {
   st.cfg = { pub: "경영상회", tables: 12, ...(s.val() || {}) }; st.cfgLoaded = true;
-  if (st.table && !validTable(st.table)) { st.table = ""; ls.set("table", ""); }
   dropStaleOrder(); render();
 });
 onValue(ref(db, "menu"), (s) => { st.menu = menuArray(s.val()); st.loaded = true; render(); },
@@ -64,17 +72,12 @@ watchConnection({ paused: () => !online });
 
 const lines = () => st.menu.filter((m) => !m.soldout && st.cart[m.id] > 0).map((m) => ({ id: m.id, name: m.name, price: m.price, qty: st.cart[m.id] }));
 
-function tableOptions() {
-  let o = '<option value="">선택</option>';
-  for (let i = 1; i <= (st.cfg.tables || 0); i++) o += `<option value="${i}"${String(st.table) === String(i) ? " selected" : ""}>${i}번 테이블</option>`;
-  return o + `<option value="포장"${st.table === "포장" ? " selected" : ""}>포장</option>`;
-}
 
 function menuView() {
   const l = lines(), n = l.reduce((a, x) => a + x.qty, 0);
   let h = `<header class="hero"><span class="sticker">QR 주문</span><h1>${esc(st.cfg.pub)}</h1><p>메뉴를 담고 주문하면 송금 안내가 나와요. 송금하면 직원이 확인하고 주방으로 넘겨요.</p></header>
-  <div class="who"><label class="fld"><span>테이블</span><select id="f-table" data-f="table">${tableOptions()}</select></label>
-  <label class="fld"><span>입금자명 (송금할 때 쓰는 이름)</span><input id="f-nick" data-f="nick" value="${esc(st.nick)}" maxlength="12" placeholder="예: 김성곤" autocomplete="off"></label></div>`;
+  <div class="who"><label class="fld"><span>입금자명 (송금할 때 쓰는 이름)</span><input id="f-nick" data-f="nick" value="${esc(st.nick)}" maxlength="12" placeholder="예: 김성곤" autocomplete="off"></label>
+  <label class="fld"><span>인원수</span><input id="f-people" data-f="people" type="number" inputmode="numeric" min="1" max="99" step="1" value="${esc(st.people)}" placeholder="예: 4" autocomplete="off"></label></div></div>`;
   if (st.notice) h += `<p class="warn" role="alert" style="margin-top:12px">${esc(st.notice)}</p>`;
   if (!st.loaded) h += '<p class="note" style="margin-top:20px">메뉴를 불러오는 중이에요…</p>';
   else if (!st.menu.length) h += '<p class="warn" style="margin-top:20px">아직 등록된 메뉴가 없어요.</p>';
@@ -102,17 +105,18 @@ function orderView() {
     s === "cancelled" ? "주문이 취소됐어요. 카운터에 문의해 주세요." :
     "송금하면 직원이 입금을 확인해요. 확인되면 이 화면이 바뀌어요.";
   const c = st.cfg, hasAcct = c.bank && c.account;
+  const tossMe = payLink(c.tossLink, ["toss.me"], o.total), kakao = payLink(c.kakaoLink, ["qr.kakaopay.com"], 0);
   const toss = `supertoss://send?bank=${encodeURIComponent(c.bank || "")}&accountNo=${encodeURIComponent(String(c.account || "").replace(/[^0-9]/g, ""))}&origin=qr&amount=${o.total}`;
   let h = `<header class="hero"><span class="sticker">내 주문</span><h1>${esc(st.cfg.pub)}</h1></header>
-  <div class="card slip"><div class="kv"><span>테이블</span><span>${esc(o.table)}${o.table === "포장" ? "" : "번"}</span></div><div class="kv"><span>입금자명</span><span>${esc(o.nick)}</span></div>
+  <div class="card slip">${o.table && o.table !== TABLE_PENDING ? `<div class="kv"><span>테이블</span><span>${esc(tableText(o.table))}</span></div>` : ""}${peopleText(o.people) ? `<div class="kv"><span>인원</span><span>${esc(peopleText(o.people))}</span></div>` : ""}<div class="kv"><span>입금자명</span><span>${esc(o.nick)}</span></div>
   <ul class="lines">${o.items.map((x) => `<li><span>${esc(x.name)} × ${esc(x.qty)}</span><span>${won(x.price * x.qty)}</span></li>`).join("")}</ul>
   <div class="kv"><span>합계</span><span class="total">${won(o.total)}</span></div></div>
   <div class="card" style="margin-top:12px">${track}<p>${esc(msg)}</p></div>`;
   if (!s) {
     h += `<ol class="steps card" style="margin-top:12px"><li><div><b>아래 계좌로 ${won(o.total)} 송금</b>` +
       (hasAcct ? `<div class="kv"><span>${esc(c.bank)}</span><span style="font-family:var(--f-mono)">${esc(c.account)}</span></div><div class="kv"><span>예금주</span><span>${esc(c.holder || "")}</span></div>
-      <div class="row"><button class="btn sm" data-act="copy" data-t="${esc(c.account)}" data-l="계좌번호 복사">계좌번호 복사</button><button class="btn sm alt" data-act="copy" data-t="${esc(o.total)}" data-l="금액 복사">금액 복사</button><a class="btn sm alt" href="${esc(toss)}">토스로 열기</a></div>
-      <p class="note">토스 버튼은 앱이 설치된 폰에서만 열려요. 안 열리면 계좌번호를 복사해서 쓰세요. 송금할 때 받는 사람 메모에 입금자명을 적어 주세요.</p>` :
+      <div class="row"><button class="btn sm" data-act="copy" data-t="${esc(c.account)}" data-l="계좌번호 복사">계좌번호 복사</button><button class="btn sm alt" data-act="copy" data-t="${esc(o.total)}" data-l="금액 복사">금액 복사</button>${tossMe ? `<a class="btn sm alt" href="${esc(tossMe)}" target="_blank" rel="noopener">토스로 송금</a>` : `<a class="btn sm alt" href="${esc(toss)}">토스로 열기</a>`}${kakao ? `<a class="btn sm alt" href="${esc(kakao)}" target="_blank" rel="noopener">카카오페이로 송금</a>` : ""}</div>
+      <p class="note">송금 앱 버튼은 폰에 앱이 있어야 열리고, 금액이 자동으로 안 들어갈 수도 있어요. 안 열리거나 금액이 다르면 계좌번호와 금액을 복사해서 직접 보내 주세요. 보낼 때 입금자명이 위에 적은 이름과 같아야 확인돼요.</p>` :
         `<p class="warn">${st.cfgLoaded ? "계좌 정보가 아직 등록되지 않았어요. 직원에게 문의해 주세요." : "계좌 정보를 불러오는 중이에요…"}</p>`) + "</div></li>" +
       '<li><div><b>기다리기</b><p class="note">직원이 입금을 확인하면 주방으로 넘어가요. 이 화면을 닫지 않아도, 다시 열면 내 주문이 그대로 있어요.</p></div></li></ol>';
   }
@@ -140,16 +144,17 @@ app.addEventListener("click", async (e) => {
   else if (a === "order") {
     const l = lines();
     if (!l.length || st.sending) return;
-    if (!validTable(st.table)) return toast("테이블을 선택해 주세요");
     const nick = st.nick.trim();
     if (!nick) return toast("입금자명을 적어 주세요");
+    const people = Number(st.people);
+    if (!Number.isInteger(people) || people < 1 || people > 99) return toast("인원수를 1~99 사이 숫자로 입력해 주세요");
     const total = sumItems(l);
     if (total > MAX_TOTAL) return toast("한 번에 " + won(MAX_TOTAL) + "까지 주문할 수 있어요. 나눠서 주문해 주세요");
     if (l.length > 30) return toast("한 번에 30가지까지 주문할 수 있어요. 나눠서 주문해 주세요");
     st.sending = true; st.slow = false; st.notice = ""; render();
     const slowTimer = setTimeout(() => { st.slow = true; render(); }, SLOW_MS);
     const r = push(ref(db, "orders"));
-    const o = { table: String(st.table), nick, items: l, total, status: "unpaid" };
+    const o = { table: TABLE_PENDING, nick, people, items: l, total, status: "unpaid" };
     try {
       // 주문 시각은 손님 폰 시계가 아니라 서버 시계로 찍어요.
       await set(r, { ...o, createdAt: serverTimestamp() });
@@ -168,7 +173,7 @@ app.addEventListener("click", async (e) => {
 });
 function onField(e) {
   const f = e.target.dataset && e.target.dataset.f; if (!f) return;
-  if (f === "table") { st.table = e.target.value; ls.set("table", st.table); }
+  if (f === "people") st.people = e.target.value;
   if (f === "nick") { st.nick = e.target.value; ls.set("nick", st.nick); }
 }
 app.addEventListener("input", onField);
