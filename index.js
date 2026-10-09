@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=5";
+import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=6";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }

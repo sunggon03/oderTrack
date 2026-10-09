@@ -1,4 +1,4 @@
-import { tableText, peopleText, db, auth, ref, onValue, update, serverTimestamp, serverNow, signOut, needLogin, $, esc, hhmm, toast, beep, configured, setupWarning, ordersArray, watchConnection, keepAwake, RULES_OLD_WARNING } from "./common.js?v=5";
+import { tableText, peopleText, db, auth, ref, onValue, update, serverTimestamp, serverNow, signOut, needLogin, $, esc, hhmm, toast, beep, configured, setupWarning, ordersArray, watchConnection, keepAwake, RULES_OLD_WARNING } from "./common.js?v=6";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }

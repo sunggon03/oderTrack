@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=5";
+import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=6";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }

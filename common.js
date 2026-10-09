@@ -218,33 +218,48 @@ export function needLogin(root, onReady) {
   });
 }
 
-// 로그인한 계정이 "직원 목록(staff)"에 등록됐는지 확인해요.
+// 로그인한 계정이 직원인지 확인해요.
 // Firebase는 누구나 새 계정을 만들 수 있어서, 로그인했다는 것만으로 직원 권한을 주면 안 돼요.
-// - 등록됨: 화면 시작
-// - 미등록: 등록 방법과 내 UID를 보여주고, 등록되면 자동으로 넘어가요
-// - 읽기 거부: 보안 규칙이 예전 버전이에요. 화면은 열되 경고를 띄워요(info.rulesOld)
+// 직원 여부는 보안 규칙이 정해요(규칙 안에 적어 둔 UID, 또는 데이터의 staff 목록). 화면은 직원만 읽을 수 있는 값(meta)을 읽어 보고 허락되면 직원으로 봐요.
+// - 허락됨: 화면 시작
+// - 거부됨: 내 UID를 보여주고 규칙에 추가하도록 안내해요. 5초마다 자동으로 다시 확인해요
+// - staff 경로 읽기가 거부되면 보안 규칙이 예전 버전이에요. 화면은 열되 경고를 띄워요(info.rulesOld)
+// 한 번만 읽어요(권한이 없으면 오류가 그대로 넘어와요).
+const readOnce = (path) => new Promise((res, rej) => onValue(ref(db, path), (s) => res(s), (e) => rej(e), { onlyOnce: true }));
 function staffGate(root, user, onReady) {
-  let opened = false, guided = false;
-  onValue(ref(db, "staff/" + user.uid), (s) => {
-    if (s.exists()) {
-      if (guided) { location.reload(); return; }
-      if (!opened) { opened = true; onReady(user, { rulesOld: false }); }
-    } else if (!opened) {
-      guided = true;
-      root.innerHTML = `<div class="card login" style="max-width:520px"><h2>직원 등록이 필요해요</h2>
-        <p>로그인은 됐지만 이 계정이 아직 직원 목록에 없어요. 다른 사람이 계정을 만들어 들어오는 것을 막기 위한 절차예요. 한 번만 하면 돼요.</p>
-        <ol class="guide"><li>Firebase 콘솔 → Realtime Database → <b>데이터</b> 탭을 열어요.</li>
-        <li>맨 위 주소에 마우스를 올려 <b>+</b>를 누르고, 키 <b>staff</b>를 만들어요.</li>
-        <li>그 안에 키는 아래 <b>UID</b>, 값은 <b>true</b>로 하나 추가해요.</li>
-        <li>추가하면 이 화면이 자동으로 넘어가요.</li></ol>
-        <div class="kv"><span>내 UID</span><span class="uid" id="sg-uid">${esc(user.uid)}</span></div>
-        <div class="row"><button class="btn sm" id="sg-copy">UID 복사</button><button class="btn sm ghost" id="sg-out">로그아웃</button></div></div>`;
-      $("#sg-copy").addEventListener("click", () => copyText(user.uid, "UID 복사"));
-      $("#sg-out").addEventListener("click", () => signOut(auth));
+  let opened = false, timer = 0, busy = false;
+  const denied = (e) => /permission/i.test(String((e && (e.code || e.message)) || ""));
+
+  async function check() {
+    if (opened || busy) return;
+    busy = true;
+    try {
+      await readOnce("meta/seq");                // 직원만 읽을 수 있어요
+      opened = true; clearInterval(timer);
+      let rulesOld = false;
+      try { await readOnce("staff/" + user.uid); } catch (e) { rulesOld = denied(e); }   // 새 규칙에서는 내 자리를 읽을 수 있어요
+      onReady(user, { rulesOld });
+    } catch (e) {
+      if (denied(e)) showGuide(); else if (!document.getElementById("sg-uid")) root.innerHTML = '<p class="note" style="margin-top:30px">서버에 연결하는 중이에요…</p>';
     }
-  }, () => {
-    if (!opened) { opened = true; onReady(user, { rulesOld: true }); }
-  });
+    busy = false;
+  }
+  function showGuide() {
+    if (document.getElementById("sg-uid")) return;
+    root.innerHTML = `<div class="card login" style="max-width:520px"><h2>직원으로 등록되지 않은 계정이에요</h2>
+      <p>로그인은 됐지만 이 계정은 아직 직원 권한이 없어요. 다른 사람이 계정을 만들어 들어오는 것을 막기 위한 절차예요.</p>
+      <ol class="guide"><li>아래 <b>UID 복사</b>를 눌러요.</li>
+      <li>복사한 UID를 관리자(개발 담당)에게 보내서 보안 규칙에 추가해요. 또는 Firebase 콘솔 → Realtime Database → <b>데이터</b> 탭에서 키 <b>staff</b> 아래에 UID를 키로, 값 <b>true</b>로 추가해도 돼요.</li>
+      <li>등록되면 이 화면이 5초 안에 자동으로 넘어가요.</li></ol>
+      <div class="kv"><span>내 UID</span><span class="uid" id="sg-uid">${esc(user.uid)}</span></div>
+      <p class="note">로그인한 이메일: ${esc(user.email || "?")}</p>
+      <div class="row"><button class="btn sm" id="sg-copy">UID 복사</button><button class="btn sm alt" id="sg-again">지금 다시 확인</button><button class="btn sm ghost" id="sg-out">로그아웃</button></div></div>`;
+    $("#sg-copy").addEventListener("click", () => copyText(user.uid, "UID 복사"));
+    $("#sg-again").addEventListener("click", () => check());
+    $("#sg-out").addEventListener("click", () => signOut(auth));
+  }
+  timer = setInterval(check, 5000);
+  check();
 }
 
 export const RULES_OLD_WARNING = '<p class="warn"><b>보안 규칙이 예전 버전이에요.</b> 지금은 누구든 계정을 만들어 주문을 보거나 계좌번호를 바꿀 수 있는 상태예요. Firebase 콘솔 > Realtime Database > 규칙에 새 database.rules.json 내용을 붙여넣고 게시해 주세요.</p>';
