@@ -1,7 +1,11 @@
-import { db, ref, onValue, push, set, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems } from "./common.js";
+import { db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=2";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
+
+const ORDER_KEEP_MS = 12 * 60 * 60 * 1000; // 이보다 오래된 "내 주문" 기록은 버려요
+const SLOW_MS = 8000;                      // 주문 전송이 이보다 오래 걸리면 안내를 보여줘요
+const MAX_TOTAL = 500000;                  // 보안 규칙의 한도와 같아야 해요
 
 const ls = {
   get(k) { try { return localStorage.getItem("pub_" + k) || ""; } catch { return ""; } },
@@ -11,10 +15,16 @@ const P = new URLSearchParams(location.search);
 const st = {
   menu: [], cfg: { pub: "경영상회", tables: 12 }, cart: {},
   table: P.get("t") || ls.get("table"), nick: ls.get("nick"),
-  order: null, stat: null, sending: false, loaded: false,
+  order: null, stat: null, sending: false, slow: false, notice: "", loaded: false, cfgLoaded: false,
 };
-try { st.order = JSON.parse(ls.get("order") || "null"); } catch {}
+try {
+  const o = JSON.parse(ls.get("order") || "null");
+  if (o && typeof o.id === "string" && Number.isFinite(o.total) && Number.isFinite(o.createdAt)) st.order = { ...o, items: cleanItems(o.items) };
+} catch {}
 let unsubStatus = null;
+
+const accepted = () => { const s = st.stat && st.stat.s; return s === "cooking" || s === "done"; };
+const validTable = (t) => t === "포장" || (/^[1-9][0-9]?$/.test(String(t)) && Number(t) <= (st.cfg.tables || 0));
 
 function watchStatus() {
   if (unsubStatus) { unsubStatus(); unsubStatus = null; }
@@ -22,11 +32,35 @@ function watchStatus() {
   if (!st.order) return;
   unsubStatus = onValue(ref(db, "status/" + st.order.id), (s) => { st.stat = s.val(); render(); });
 }
+function dropOrder() { st.order = null; ls.set("order", ""); watchStatus(); }
+// 지난 영업일의 주문이나, 카운터에서 "주문 모두 지우기"를 한 뒤에 남은 주문 기록은 버려요.
+// (안 버리면 지워진 주문의 송금 안내가 계속 보여서 손님이 없는 주문에 돈을 보낼 수 있어요.)
+function dropStaleOrder() {
+  const o = st.order; if (!o) return;
+  const wiped = Number(st.cfg.wipedAt) || 0;
+  if (serverNow() - o.createdAt > ORDER_KEEP_MS || (wiped && o.createdAt < wiped)) dropOrder();
+}
 
-onValue(ref(db, "settings"), (s) => { st.cfg = { pub: "경영상회", tables: 12, ...(s.val() || {}) }; render(); });
+// 동시 접속 수 아끼기: 무료 요금제는 동시에 100대까지만 붙을 수 있어요.
+// 화면을 안 보고 있거나(다른 앱으로 넘어감) 이미 "주방 접수"까지 끝난 손님은 연결을 끊어 둬요.
+let online = true;
+function syncConn() {
+  const want = st.sending || (document.visibilityState !== "hidden" && !(st.order && st.cfgLoaded && accepted()));
+  if (want === online) return;
+  online = want;
+  if (want) goOnline(db); else goOffline(db);
+}
+document.addEventListener("visibilitychange", syncConn);
+
+onValue(ref(db, "settings"), (s) => {
+  st.cfg = { pub: "경영상회", tables: 12, ...(s.val() || {}) }; st.cfgLoaded = true;
+  if (st.table && !validTable(st.table)) { st.table = ""; ls.set("table", ""); }
+  dropStaleOrder(); render();
+});
 onValue(ref(db, "menu"), (s) => { st.menu = menuArray(s.val()); st.loaded = true; render(); },
   () => { st.loaded = true; render(); });
 watchStatus();
+watchConnection({ paused: () => !online });
 
 const lines = () => st.menu.filter((m) => !m.soldout && st.cart[m.id] > 0).map((m) => ({ id: m.id, name: m.name, price: m.price, qty: st.cart[m.id] }));
 
@@ -41,6 +75,7 @@ function menuView() {
   let h = `<header class="hero"><span class="sticker">QR 주문</span><h1>${esc(st.cfg.pub)}</h1><p>메뉴를 담고 주문하면 송금 안내가 나와요. 송금하면 직원이 확인하고 주방으로 넘겨요.</p></header>
   <div class="who"><label class="fld"><span>테이블</span><select id="f-table" data-f="table">${tableOptions()}</select></label>
   <label class="fld"><span>입금자명 (송금할 때 쓰는 이름)</span><input id="f-nick" data-f="nick" value="${esc(st.nick)}" maxlength="12" placeholder="예: 김성곤" autocomplete="off"></label></div>`;
+  if (st.notice) h += `<p class="warn" role="alert" style="margin-top:12px">${esc(st.notice)}</p>`;
   if (!st.loaded) h += '<p class="note" style="margin-top:20px">메뉴를 불러오는 중이에요…</p>';
   else if (!st.menu.length) h += '<p class="warn" style="margin-top:20px">아직 등록된 메뉴가 없어요.</p>';
   h += categories(st.menu).map((c) => `<section class="cat"><h2>${esc(c)}</h2><ul class="items">` +
@@ -48,35 +83,37 @@ function menuView() {
       const q = st.cart[m.id] || 0;
       return `<li class="item${m.soldout ? " sold" : ""}"><div class="nm"><b>${esc(m.name)}</b><span class="pr">${won(m.price)}</span></div>` +
         (m.soldout ? '<span class="tag">품절</span>' :
-          `<div class="step"><button data-act="dec" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 하나 빼기"${q ? "" : " disabled"}>−</button><output>${q}</output><button data-act="inc" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 하나 더">+</button></div>`) + "</li>";
+          `<div class="step"><button data-act="dec" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 하나 빼기"${q ? "" : " disabled"}>−</button><output>${q}</output><button data-act="inc" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 하나 더"${q >= 99 ? " disabled" : ""}>+</button></div>`) + "</li>";
     }).join("") + "</ul></section>").join("");
-  h += `<div class="bar"><div><div class="tot"><small>${n ? n + "개 담음" : "메뉴를 담아 주세요"}</small><b>${won(sumItems(l))}</b></div><button class="btn" data-act="order"${n && !st.sending ? "" : " disabled"}>${st.sending ? "보내는 중…" : "주문하기"}</button></div></div>`;
+  const hint = st.slow ? "인터넷이 느려요. 연결되면 자동으로 보내져요" : n ? n + "개 담음" : "메뉴를 담아 주세요";
+  h += `<div class="bar"><div><div class="tot"><small>${hint}</small><b>${won(sumItems(l))}</b></div><button class="btn" data-act="order"${n && !st.sending ? "" : " disabled"}>${st.sending ? "보내는 중…" : "주문하기"}</button></div></div>`;
   return h;
 }
 
 function orderView() {
   const o = st.order, s = st.stat && st.stat.s;
   // 조리 완료는 손님에게 알리지 않아요. 입금이 확인되면 "주방 접수"까지만 보여줘요.
-  const accepted = s === "cooking" || s === "done";
-  const stage = accepted ? 2 : 0;
+  const ok = accepted();
+  const stage = ok ? 2 : 0;
   const names = ["입금 확인", "주방 접수"];
   const track = s === "cancelled" ? "" : `<div class="track" aria-label="진행 상황">${names.map((t, i) => `<span class="${i < stage ? "past" : i === stage ? "on" : ""}">${t}</span>`).join("")}</div>`;
-  const msg = accepted ? `입금이 확인되어 주방에 접수됐어요.${st.stat.seq ? " 주문번호 " + st.stat.seq + "번" : ""}` :
+  const seq = Number(st.stat && st.stat.seq) || 0;
+  const msg = ok ? `입금이 확인되어 주방에 접수됐어요.${seq ? " 주문번호 " + seq + "번" : ""}` :
     s === "cancelled" ? "주문이 취소됐어요. 카운터에 문의해 주세요." :
     "송금하면 직원이 입금을 확인해요. 확인되면 이 화면이 바뀌어요.";
   const c = st.cfg, hasAcct = c.bank && c.account;
-  const toss = `supertoss://send?bank=${encodeURIComponent(c.bank || "")}&accountNo=${encodeURIComponent((c.account || "").replace(/[^0-9]/g, ""))}&origin=qr&amount=${o.total}`;
+  const toss = `supertoss://send?bank=${encodeURIComponent(c.bank || "")}&accountNo=${encodeURIComponent(String(c.account || "").replace(/[^0-9]/g, ""))}&origin=qr&amount=${o.total}`;
   let h = `<header class="hero"><span class="sticker">내 주문</span><h1>${esc(st.cfg.pub)}</h1></header>
   <div class="card slip"><div class="kv"><span>테이블</span><span>${esc(o.table)}${o.table === "포장" ? "" : "번"}</span></div><div class="kv"><span>입금자명</span><span>${esc(o.nick)}</span></div>
-  <ul class="lines">${o.items.map((x) => `<li><span>${esc(x.name)} × ${x.qty}</span><span>${won(x.price * x.qty)}</span></li>`).join("")}</ul>
+  <ul class="lines">${o.items.map((x) => `<li><span>${esc(x.name)} × ${esc(x.qty)}</span><span>${won(x.price * x.qty)}</span></li>`).join("")}</ul>
   <div class="kv"><span>합계</span><span class="total">${won(o.total)}</span></div></div>
   <div class="card" style="margin-top:12px">${track}<p>${esc(msg)}</p></div>`;
   if (!s) {
     h += `<ol class="steps card" style="margin-top:12px"><li><div><b>아래 계좌로 ${won(o.total)} 송금</b>` +
       (hasAcct ? `<div class="kv"><span>${esc(c.bank)}</span><span style="font-family:var(--f-mono)">${esc(c.account)}</span></div><div class="kv"><span>예금주</span><span>${esc(c.holder || "")}</span></div>
-      <div class="row"><button class="btn sm" data-act="copy" data-t="${esc(c.account)}" data-l="계좌번호 복사">계좌번호 복사</button><button class="btn sm alt" data-act="copy" data-t="${o.total}" data-l="금액 복사">금액 복사</button><a class="btn sm alt" href="${esc(toss)}">토스로 열기</a></div>
+      <div class="row"><button class="btn sm" data-act="copy" data-t="${esc(c.account)}" data-l="계좌번호 복사">계좌번호 복사</button><button class="btn sm alt" data-act="copy" data-t="${esc(o.total)}" data-l="금액 복사">금액 복사</button><a class="btn sm alt" href="${esc(toss)}">토스로 열기</a></div>
       <p class="note">토스 버튼은 앱이 설치된 폰에서만 열려요. 안 열리면 계좌번호를 복사해서 쓰세요. 송금할 때 받는 사람 메모에 입금자명을 적어 주세요.</p>` :
-        '<p class="warn">계좌 정보가 아직 등록되지 않았어요. 직원에게 문의해 주세요.</p>') + "</div></li>" +
+        `<p class="warn">${st.cfgLoaded ? "계좌 정보가 아직 등록되지 않았어요. 직원에게 문의해 주세요." : "계좌 정보를 불러오는 중이에요…"}</p>`) + "</div></li>" +
       '<li><div><b>기다리기</b><p class="note">직원이 입금을 확인하면 주방으로 넘어가요. 이 화면을 닫지 않아도, 다시 열면 내 주문이 그대로 있어요.</p></div></li></ol>';
   }
   h += `<div class="row" style="margin-top:12px"><button class="btn alt" data-act="newOrder">${s === "cancelled" ? "새 주문 하기" : "추가 주문 하기"}</button></div>`;
@@ -84,32 +121,49 @@ function orderView() {
 }
 
 function render() {
+  syncConn();
+  // 이름을 적는 도중에 화면이 다시 그려져도(품절 반영 등) 입력 칸이 풀리지 않게 해요.
+  const ae = document.activeElement, fid = ae && ae.tagName === "INPUT" && app.contains(ae) ? ae.id : "", pos = fid ? ae.selectionStart : 0;
   const y = window.scrollY;
   app.innerHTML = st.order ? orderView() : menuView();
   window.scrollTo(0, y);
+  const el = fid && document.getElementById(fid);
+  if (el) { el.focus({ preventScroll: true }); try { el.setSelectionRange(pos, pos); } catch {} }
 }
 
 app.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const a = b.dataset.act, id = b.dataset.id;
-  if (a === "inc" || a === "dec") { st.cart[id] = Math.max(0, (st.cart[id] || 0) + (a === "inc" ? 1 : -1)); render(); }
+  if (a === "inc" || a === "dec") { st.cart[id] = Math.max(0, Math.min(99, (st.cart[id] || 0) + (a === "inc" ? 1 : -1))); render(); }
   else if (a === "copy") copyText(b.dataset.t, b.dataset.l);
-  else if (a === "newOrder") { st.order = null; st.stat = null; st.cart = {}; ls.set("order", ""); watchStatus(); render(); }
+  else if (a === "newOrder") { st.cart = {}; st.notice = ""; dropOrder(); render(); }
   else if (a === "order") {
     const l = lines();
     if (!l.length || st.sending) return;
-    if (!st.table) return toast("테이블을 선택해 주세요");
-    if (!st.nick.trim()) return toast("입금자명을 적어 주세요");
-    st.sending = true; render();
+    if (!validTable(st.table)) return toast("테이블을 선택해 주세요");
+    const nick = st.nick.trim();
+    if (!nick) return toast("입금자명을 적어 주세요");
+    const total = sumItems(l);
+    if (total > MAX_TOTAL) return toast("한 번에 " + won(MAX_TOTAL) + "까지 주문할 수 있어요. 나눠서 주문해 주세요");
+    if (l.length > 30) return toast("한 번에 30가지까지 주문할 수 있어요. 나눠서 주문해 주세요");
+    st.sending = true; st.slow = false; st.notice = ""; render();
+    const slowTimer = setTimeout(() => { st.slow = true; render(); }, SLOW_MS);
     const r = push(ref(db, "orders"));
-    const o = { table: String(st.table), nick: st.nick.trim(), items: l, total: sumItems(l), status: "unpaid", createdAt: Date.now() };
+    const o = { table: String(st.table), nick, items: l, total, status: "unpaid" };
     try {
-      await set(r, o);
-      st.order = { id: r.key, ...o }; ls.set("order", JSON.stringify(st.order)); st.cart = {};
+      // 주문 시각은 손님 폰 시계가 아니라 서버 시계로 찍어요.
+      await set(r, { ...o, createdAt: serverTimestamp() });
+      st.order = { id: r.key, ...o, createdAt: serverNow() }; ls.set("order", JSON.stringify(st.order)); st.cart = {};
       watchStatus();
       window.scrollTo(0, 0);
-    } catch { toast("주문을 보내지 못했어요. 인터넷을 확인하고 다시 눌러 주세요"); }
-    st.sending = false; render();
+    } catch (err) {
+      const denied = /permission/i.test(String((err && (err.code || err.message)) || ""));
+      st.notice = !denied ? "주문을 보내지 못했어요. 인터넷을 확인하고 다시 눌러 주세요."
+        : st.slow ? "연결이 불안정해서 주문이 전송됐는지 확실하지 않아요. 다시 주문하기 전에 카운터에서 확인해 주세요."
+        : "주문이 접수되지 않았어요. 메뉴가 방금 바뀌었거나 품절됐을 수 있어요. 메뉴를 확인하고 다시 주문해 주세요.";
+      window.scrollTo(0, 0);
+    }
+    clearTimeout(slowTimer); st.sending = false; st.slow = false; render();
   }
 });
 function onField(e) {
