@@ -280,8 +280,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* ===== 주방 슬라이드: 한 화면 최대 5장(아이패드 가로), 더 있으면 옆으로 넘김. 주문서는 세로로 긴 직사각형 ===== */
 .slide{--per:2;--gap:14px;display:flex;gap:var(--gap);overflow-x:auto;overflow-y:hidden;padding:10px;margin-inline:-10px;scroll-snap-type:x mandatory;scroll-padding-inline:10px;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;align-items:stretch}
 @media (min-width:700px){.slide{--per:3;--gap:16px}}
-@media (min-width:1000px){.slide{--per:5}}
-.slide .ticket{display:flex;flex-direction:column;flex:0 0 calc((100% - (var(--per) - 1) * var(--gap)) / var(--per));min-width:0;scroll-snap-align:start;height:clamp(440px,calc(100vh - 300px),780px);padding-inline:12px;padding-bottom:12px;gap:8px}
+@media (min-width:1000px){.slide{--per:4}}
+.slide .ticket{display:flex;flex-direction:column;flex:0 0 calc((100% - (var(--per) - 1) * var(--gap)) / var(--per));min-width:0;scroll-snap-align:start;height:clamp(440px,calc(100vh - 230px),780px);padding-inline:12px;padding-bottom:12px;gap:8px}
 .slide .ticket::before{margin-inline:-12px}
 .slide .ticket .ttable{font-size:52px;gap:6px 10px}
 .slide .ticket .tppl{font-size:20px;padding:0 10px}
@@ -301,9 +301,11 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .wide .slide .ticket .btn{min-height:64px;font-size:21px}
 }
 @media (min-width:1000px){
-  .wide .slide .ticket .ttable{font-size:56px}
-  .wide .slide .ticket li{font-size:22px}
-  .wide .slide .ticket li b{font-size:30px}
+  .wide .slide .ticket .ttable{font-size:64px}
+  .wide .slide .ticket li{font-size:23px;padding-bottom:4px}
+  .wide .slide .ticket li b{font-size:32px}
+  .wide .slide .ticket ul{gap:8px}
+  .wide .slide .ticket .tno,.wide .slide .ticket .where{font-size:19px}
 }
 .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px}
 .pager[hidden]{display:none}
