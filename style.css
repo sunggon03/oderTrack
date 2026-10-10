@@ -312,3 +312,19 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .pager span{flex:1;text-align:center;font-family:var(--f-read);font-weight:700;font-size:17px;color:var(--muted2);font-variant-numeric:tabular-nums}
 .pager .btn{min-width:150px}
 .pager.new span{color:#fff;background:var(--bad);border-radius:99px;padding:8px 14px;animation:fresh .9s ease-in-out 9}
+
+/* 주방 주문서 압축: 주문번호·이름은 한 줄, 테이블 번호는 조금 작게, 메뉴는 이름과 수량을 한 줄에 → 슬라이드 없이 메뉴가 다 보이게 */
+.slide .ticket .tmeta{flex-direction:row;flex-wrap:wrap;justify-content:flex-start;align-items:baseline;gap:0 6px;padding-bottom:6px}
+.slide .ticket .where::before{content:"· ";color:var(--tan)}
+.slide .ticket .ttable{font-size:44px}
+.slide .ticket li{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:0 8px;padding-bottom:3px}
+.slide .ticket li .nm{display:block;flex:1 1 auto;min-width:0}
+.slide .ticket li b{display:block;margin-left:auto;font-size:28px}
+.slide .ticket ul{gap:6px}
+@media (min-width:700px){
+  .wide .slide .ticket .ttable{font-size:52px}
+  .wide .slide .ticket li{font-size:22px}
+  .wide .slide .ticket li b{font-size:30px}
+  .wide .slide .ticket ul{gap:6px}
+  .wide .slide .ticket .tno,.wide .slide .ticket .where{font-size:18px}
+}
