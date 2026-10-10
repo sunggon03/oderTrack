@@ -328,3 +328,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .wide .slide .ticket ul{gap:6px}
   .wide .slide .ticket .tno,.wide .slide .ticket .where{font-size:18px}
 }
+
+/* 주방 주문서: "주문 2번 김성곤" — 같은 가로 줄에 구분 점 없이 */
+.slide .ticket .tmeta{display:block;line-height:1.3}
+.slide .ticket .tmeta .tno,.slide .ticket .tmeta .where{display:inline}
+.slide .ticket .where::before{content:none}
+.slide .ticket .tmeta .where{margin-left:8px;color:var(--brown-d);font-weight:900}
