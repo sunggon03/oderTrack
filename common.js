@@ -49,6 +49,10 @@ export function categories(menu) {
 // 분류 이름에 아래 낱말이 들어 있으면 해당 단위가 돼요. 바꾸려면 이 표만 고치면 돼요.
 const UNIT_RULES = [[/주류|술|맥주|소주|와인/, "병"], [/메인|사이드|안주|식사|요리/, "인분"]];
 export const unitFor = (cat) => { const c = String(cat || ""); const r = UNIT_RULES.find(([re]) => re.test(c)); return r ? r[1] : "개"; };
+// 주방 주문서에 올리지 않는 메뉴 분류. 분류 이름에 아래 낱말이 들어 있으면 주방 화면에서 빠져요(카운터 입금 확인·정산에는 그대로 들어가요).
+// 전부 이 분류인 주문은 주방을 거치지 않고, 입금 확인과 동시에 "완료"가 돼요.
+export const KITCHEN_HIDE = /소개팅/;
+export const hiddenFromKitchen = (cat) => KITCHEN_HIDE.test(String(cat || ""));
 export const sumItems = (items) => (items || []).reduce((a, x) => a + x.price * x.qty, 0);
 
 // 주문은 손님 기기에서 온 데이터라서 믿지 않아요. 화면에 넣기 전에 글자·숫자 모양을 강제로 맞춰요.

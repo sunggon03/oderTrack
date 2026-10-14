@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, set, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, unitFor, RULES_OLD_WARNING } from "./common.js?v=7";
+import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, set, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, unitFor, hiddenFromKitchen, RULES_OLD_WARNING } from "./common.js?v=7";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -24,6 +24,8 @@ function trusted(o) {
   o.items.forEach((x) => { const m = byId[x.id]; if (m) t += m.price * x.qty; else { known = false; t += x.price * x.qty; } });
   return { amount: t, known, mismatch: t !== sumItems(o.items) || t !== o.total };
 }
+// 모든 메뉴가 "소개팅" 같은 주방 제외 분류인 주문은 주방을 거치지 않고 입금 확인과 동시에 완료 처리해요.
+function skipsKitchen(o) { const byId = Object.fromEntries(st.menu.map((m) => [m.id, m])); return o.items.length > 0 && o.items.every((x) => byId[x.id] && hiddenFromKitchen(byId[x.id].cat)); }
 function itemsHtml(items) { return `<ul class="lines">${items.map((x) => `<li><span>${esc(x.name)} × ${esc(x.qty)}</span><span>${won(x.price * x.qty)}</span></li>`).join("")}</ul>`; }
 
 function payCard(o) {
@@ -33,7 +35,7 @@ function payCard(o) {
   ${late ? `<p class="warn"><b>${mins}분째 입금 확인이 안 됐어요.</b> 은행 알림을 다시 보고, 입금이 없으면 테이블에 확인한 뒤 취소하세요.</p>` : ""}
   ${t.mismatch ? '<p class="warn">손님 화면의 금액과 현재 메뉴 가격이 달라요. 위 금액(현재 메뉴 가격)으로 확인하세요.</p>' : ""}
   <label class="fld tblf"><span>테이블 번호 <em>(입금 확인할 때 꼭 입력)</em></span><input id="tb-${esc(o.id)}" data-f="tbl" data-id="${esc(o.id)}" value="${esc(tableValue(o))}" maxlength="10" autocomplete="off" enterkeyhint="done" placeholder="예: 3, 포장"></label>
-  <div class="row"><button class="btn ok" data-act="confirm" data-id="${esc(o.id)}">입금 확인 → 주방으로</button><button class="btn ghost sm" data-act="cancel" data-id="${esc(o.id)}">취소</button></div></article>`;
+  <div class="row"><button class="btn ok" data-act="confirm" data-id="${esc(o.id)}">${skipsKitchen(o) ? "입금 확인 (주방 제외)" : "입금 확인 → 주방으로"}</button><button class="btn ghost sm" data-act="cancel" data-id="${esc(o.id)}">취소</button></div></article>`;
 }
 function otherCard(o) {
   const lab = { cooking: "조리중", done: "완료", cancelled: "취소" }[o.status] || o.status;
@@ -180,9 +182,12 @@ async function confirmPay(id) {
   try {
     const r = await runTransaction(ref(db, "meta/seq"), (v) => (Number(v) || 0) + 1);
     const seq = r.snapshot.val();
-    await update(ref(db), { [`orders/${id}/status`]: "cooking", [`orders/${id}/table`]: table, [`orders/${id}/paidAt`]: serverTimestamp(), [`orders/${id}/seq`]: seq, [`status/${id}`]: { s: "cooking", seq } });
+    const skip = skipsKitchen(o), s2 = skip ? "done" : "cooking";
+    const up = { [`orders/${id}/status`]: s2, [`orders/${id}/table`]: table, [`orders/${id}/paidAt`]: serverTimestamp(), [`orders/${id}/seq`]: seq, [`status/${id}`]: { s: s2, seq } };
+    if (skip) up[`orders/${id}/doneAt`] = serverTimestamp();
+    await update(ref(db), up);
     delete tblInput[id];
-    toast(seq + "번 주문을 주방으로 보냈어요 (" + tableText(table) + ")");
+    toast(skip ? seq + "번 주문 입금 확인 완료 (주방에는 안 가요, " + tableText(table) + ")" : seq + "번 주문을 주방으로 보냈어요 (" + tableText(table) + ")");
   } catch { toast("처리하지 못했어요. 다시 눌러 주세요"); }
   busy.delete(id);
 }
