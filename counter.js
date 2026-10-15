@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, isEventMenu, isEventItem, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=9";
+import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, isEventItem, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=11";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -17,12 +17,20 @@ function prevTable(o) {
   const k = normNick(o.nick); if (!k) return "";
   let best = null;
   st.orders.forEach((x) => {
-    if (x.id === o.id || (x.status !== "cooking" && x.status !== "done") || !x.table || x.table === TABLE_PENDING || normNick(x.nick) !== k) return;
+    if (x.id === o.id || (x.status !== "cooking" && x.status !== "done") || !/^[1-9][0-9]?$/.test(String(x.table)) || normNick(x.nick) !== k) return;
     if (!best || (x.paidAt || x.createdAt) > (best.paidAt || best.createdAt)) best = x;
   });
   return best ? best.table : "";
 }
-const tableValue = (o) => (tblInput[o.id] ?? (o.table && o.table !== TABLE_PENDING ? o.table : prevTable(o))).trim();
+// 우선순위: 직원이 지금 입력 중인 값 → 같은 입금자명으로 마지막에 입금 확인된 번호(직원이 고쳤으면 고친 번호) → 손님이 적은 번호
+const guestTable = (o) => (o.table && o.table !== TABLE_PENDING ? o.table : "");
+const tableValue = (o) => String(tblInput[o.id] ?? (prevTable(o) || guestTable(o))).trim();
+function tableHint(o) {
+  if (tblInput[o.id] !== undefined) return "(입금 확인할 때 꼭 입력)";
+  const p = prevTable(o), g = guestTable(o);
+  if (p) return p === g || !g ? "(같은 입금자명의 마지막 주문 번호예요)" : `(같은 입금자명의 마지막 주문 번호예요 · 손님은 ${esc(g)}번이라고 적었어요)`;
+  return g ? "(손님이 적은 번호예요 · 다르면 고치세요)" : "(입금 확인할 때 꼭 입력)";
+}
 const minsWaiting = (o) => Math.max(0, Math.floor((serverNow() - o.createdAt) / 60000));
 const isLate = (o) => o.status === "unpaid" && minsWaiting(o) >= UNPAID_WARN_MIN;
 
@@ -45,7 +53,7 @@ function payCard(o) {
   <div class="amount">${won(t.amount)}</div>${itemsHtml(o.items)}
   ${late ? `<p class="warn"><b>${mins}분째 입금 확인이 안 됐어요.</b> 은행 알림을 다시 보고, 입금이 없으면 테이블에 확인한 뒤 취소하세요.</p>` : ""}
   ${t.mismatch ? '<p class="warn">손님 화면의 금액과 현재 메뉴 가격이 달라요. 위 금액(현재 메뉴 가격)으로 확인하세요.</p>' : ""}
-  ${dateOnly(o) ? '<p class="note"><b>소개팅 주문이에요.</b> 테이블 번호 없이 입금 확인만 하면 돼요. 주방에는 전달되지 않아요.</p>' : `<label class="fld tblf"><span>테이블 번호 <em>${tblInput[o.id] === undefined && prevTable(o) ? "(같은 이름의 이전 주문 번호로 채웠어요 · 다르면 고치세요)" : "(입금 확인할 때 꼭 입력)"}</em></span><input id="tb-${esc(o.id)}" data-f="tbl" data-id="${esc(o.id)}" value="${esc(tableValue(o))}" maxlength="10" autocomplete="off" enterkeyhint="done" placeholder="예: 3, 포장"></label>`}
+  ${dateOnly(o) ? '<p class="note"><b>소개팅 주문이에요.</b> 테이블 번호 없이 입금 확인만 하면 돼요. 주방에는 전달되지 않아요.</p>' : `<label class="fld tblf"><span>테이블 번호 <em>${tableHint(o)}</em></span><input id="tb-${esc(o.id)}" data-f="tbl" data-id="${esc(o.id)}" value="${esc(tableValue(o))}" maxlength="2" inputmode="numeric" autocomplete="off" enterkeyhint="done" placeholder="예: 3"></label>`}
   <div class="row"><button class="btn ok" data-act="confirm" data-id="${esc(o.id)}">${dateOnly(o) ? "입금 확인" : "입금 확인 → 주방으로"}</button><button class="btn ghost sm" data-act="cancel" data-id="${esc(o.id)}">취소</button></div></article>`;
 }
 function otherCard(o) {
@@ -82,7 +90,7 @@ function menuTab() {
   <section class="sec"><h3>메뉴 <em>품절 체크는 바로 반영되고, 나머지는 저장을 눌러야 반영돼요</em></h3>`;
   if (!d.menu.length) h += '<button class="btn alt" data-act="seed">예시 메뉴 넣기</button>';
   h += d.menu.map((m, i) => `<div class="card"><div class="mrow"><label class="fld"><span>분류</span><input id="m-cat-${i}" data-f="m:cat" data-i="${i}" value="${esc(m.cat)}" maxlength="20"></label><label class="fld nmf"><span>메뉴 이름</span><input id="m-name-${i}" data-f="m:name" data-i="${i}" value="${esc(m.name)}" maxlength="40"></label><label class="fld"><span>가격(원)</span><input id="m-price-${i}" type="number" min="0" max="500000" step="500" data-f="m:price" data-i="${i}" value="${esc(m.price)}"></label>
-    <div class="acts"><label class="chk"><input id="m-sold-${i}" type="checkbox" data-f="m:soldout" data-i="${i}"${m.soldout ? " checked" : ""}> 품절</label><label class="chk"><input id="m-ev-${i}" type="checkbox" data-f="m:event" data-i="${i}"${isEventMenu(m) ? " checked" : ""}${m.event !== true && isEventMenu(m) ? " disabled" : ""}> 소개팅(주방 제외)</label><button class="btn ghost sm" data-act="mup" data-i="${i}" aria-label="위로">↑</button><button class="btn ghost sm" data-act="mdn" data-i="${i}" aria-label="아래로">↓</button><button class="btn ghost sm" data-act="mdel" data-i="${i}" style="color:var(--bad)">삭제</button></div></div></div>`).join("");
+    <div class="acts"><label class="chk"><input id="m-sold-${i}" type="checkbox" data-f="m:soldout" data-i="${i}"${m.soldout ? " checked" : ""}> 품절</label><button class="btn ghost sm" data-act="mup" data-i="${i}" aria-label="위로">↑</button><button class="btn ghost sm" data-act="mdn" data-i="${i}" aria-label="아래로">↓</button><button class="btn ghost sm" data-act="mdel" data-i="${i}" style="color:var(--bad)">삭제</button></div></div></div>`).join("");
   h += `<div class="row"><button class="btn alt" data-act="madd">+ 메뉴 추가</button></div></section>
   <div class="bar"><div><div class="tot"><small>저장하면 손님 화면이 바로 바뀌어요</small></div><button class="btn" data-act="save">저장</button></div></div>`;
   return h;
@@ -152,6 +160,7 @@ async function confirmPay(id) {
   if (!o || o.status !== "unpaid" || busy.has(id)) return;
   const only = dateOnly(o);
   const table = only ? DATE_WORD : tableValue(o);
+  if (table && !only && !/^[1-9][0-9]?$/.test(table)) { toast("테이블 번호는 숫자(1~99)로 입력해 주세요"); const el = document.getElementById("tb-" + id); if (el) el.focus(); return; }
   if (!table) { toast("테이블 번호를 먼저 입력해 주세요"); const el = document.getElementById("tb-" + id); if (el) el.focus(); return; }
   busy.add(id);
   try {
@@ -183,7 +192,7 @@ async function save() {
   const menu = d.menu.filter((m) => String(m.name).trim());
   if (!menu.length) return toast("메뉴가 하나 이상 있어야 해요");
   const obj = {};
-  menu.forEach((m, i) => { obj[m.id] = { cat: String(m.cat || "").trim().slice(0, 20) || "기타", name: String(m.name).trim().slice(0, 40), price: Math.max(0, Math.min(500000, parseInt(m.price) || 0)), soldout: !!m.soldout, order: i }; if (m.event === true) obj[m.id].event = true; });
+  menu.forEach((m, i) => { obj[m.id] = { cat: String(m.cat || "").trim().slice(0, 20) || "기타", name: String(m.name).trim().slice(0, 40), price: Math.max(0, Math.min(500000, parseInt(m.price) || 0)), soldout: !!m.soldout, order: i }; });
   // wipedAt(마지막으로 주문을 모두 지운 시각)은 손님 화면 초기화에 쓰여서 저장할 때 그대로 둬요.
   let cfg;
   try {
@@ -236,7 +245,7 @@ async function onField(e) {
   else if (f.startsWith("s:")) st.draft.cfg[f.slice(2)] = t.value;
   else if (f.startsWith("m:")) {
     const k = f.slice(2), m = st.draft.menu[+t.dataset.i];
-    m[k] = k === "price" ? Math.max(0, parseInt(t.value) || 0) : k === "soldout" || k === "event" ? t.checked : t.value;
+    m[k] = k === "price" ? Math.max(0, parseInt(t.value) || 0) : k === "soldout" ? t.checked : t.value;
     // 품절은 바로 반영해요. 아직 저장 전인 새 메뉴는 저장할 때 같이 반영돼요.
     if (k === "soldout" && st.menu.some((x) => x.id === m.id)) {
       try { await update(ref(db, "menu/" + m.id), { soldout: m.soldout }); } catch { toast("품절 표시를 바꾸지 못했어요"); }

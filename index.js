@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=9";
+import { TABLE_PENDING, tableText, peopleText, db, ref, onValue, push, set, goOffline, goOnline, serverTimestamp, serverNow, $, esc, won, toast, copyText, configured, setupWarning, menuArray, categories, sumItems, cleanItems, watchConnection } from "./common.js?v=11";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -15,7 +15,7 @@ const ls = {
 };
 const st = {
   menu: [], cfg: { pub: "경영상회", tables: 12 }, cart: {},
-  nick: ls.get("nick"), people: "",
+  nick: ls.get("nick"), table: "",
   order: null, stat: null, sending: false, slow: false, notice: "", loaded: false, cfgLoaded: false,
 };
 try {
@@ -79,7 +79,7 @@ function menuView() {
   const l = lines(), n = l.reduce((a, x) => a + x.qty, 0);
   let h = `<header class="hero"><span class="sticker">QR 주문</span><h1>${esc(st.cfg.pub)}</h1><p>메뉴를 담고 주문하면 송금 안내가 나와요. 송금하면 직원이 확인하고 주방으로 넘겨요.</p></header>
   <div class="who"><label class="fld"><span>입금자명 (송금할 때 쓰는 이름)</span><input id="f-nick" data-f="nick" value="${esc(st.nick)}" maxlength="12" placeholder="예: 김성곤" autocomplete="off"></label>
-  <label class="fld"><span>인원수</span><input id="f-people" data-f="people" type="number" inputmode="numeric" min="1" max="99" step="1" value="${esc(st.people)}" placeholder="예: 4" autocomplete="off"></label></div></div>`;
+  <label class="fld"><span>테이블 번호 <em>(테이블에 붙은 번호)</em></span><input id="f-table" data-f="table" type="number" inputmode="numeric" min="1" max="99" step="1" value="${esc(st.table)}" placeholder="예: 7" autocomplete="off"></label></div></div>`;
   if (st.notice) h += `<p class="warn" role="alert" style="margin-top:12px">${esc(st.notice)}</p>`;
   if (!st.loaded) h += '<p class="note" style="margin-top:20px">메뉴를 불러오는 중이에요…</p>';
   else if (!st.menu.length) h += '<p class="warn" style="margin-top:20px">아직 등록된 메뉴가 없어요.</p>';
@@ -148,15 +148,15 @@ app.addEventListener("click", async (e) => {
     if (!l.length || st.sending) return;
     const nick = st.nick.trim();
     if (!nick) return toast("입금자명을 적어 주세요");
-    const people = Number(st.people);
-    if (!Number.isInteger(people) || people < 1 || people > 99) return toast("인원수를 1~99 사이 숫자로 입력해 주세요");
+    const tno = Number(String(st.table).trim());
+    if (!Number.isInteger(tno) || tno < 1 || tno > 99) return toast("테이블 번호를 숫자로 입력해 주세요 (예: 7)");
     const total = sumItems(l);
     if (total > MAX_TOTAL) return toast("한 번에 " + won(MAX_TOTAL) + "까지 주문할 수 있어요. 나눠서 주문해 주세요");
     if (l.length > 30) return toast("한 번에 30가지까지 주문할 수 있어요. 나눠서 주문해 주세요");
     st.sending = true; st.slow = false; st.notice = ""; render();
     const slowTimer = setTimeout(() => { st.slow = true; render(); }, SLOW_MS);
     const r = push(ref(db, "orders"));
-    const o = { table: TABLE_PENDING, nick, people, items: l, total, status: "unpaid" };
+    const o = { table: String(tno), nick, items: l, total, status: "unpaid" };
     try {
       // 주문 시각은 손님 폰 시계가 아니라 서버 시계로 찍어요.
       await set(r, { ...o, createdAt: serverTimestamp() });
@@ -175,7 +175,7 @@ app.addEventListener("click", async (e) => {
 });
 function onField(e) {
   const f = e.target.dataset && e.target.dataset.f; if (!f) return;
-  if (f === "people") st.people = e.target.value;
+  if (f === "table") st.table = e.target.value;
   if (f === "nick") { st.nick = e.target.value; ls.set("nick", st.nick); }
 }
 app.addEventListener("input", onField);
