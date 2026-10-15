@@ -1,4 +1,4 @@
-import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=8";
+import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, isEventMenu, isEventItem, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=9";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
@@ -35,9 +35,10 @@ function trusted(o) {
 }
 function itemsHtml(items) { return `<ul class="lines">${items.map((x) => `<li><span>${esc(x.name)} × ${esc(x.qty)}</span><span>${won(x.price * x.qty)}</span></li>`).join("")}</ul>`; }
 
-// 메뉴 이름에 "소개팅"이 들어간 항목만 있는 주문: 입금 확인만 하고 테이블·주방은 건너뛰어요.
+// 소개팅(일촌 신청 등) 항목만 있는 주문: 입금 확인만 하고 테이블·주방은 건너뛰어요.
 const DATE_WORD = "소개팅";
-const dateOnly = (o) => o.items.length > 0 && o.items.every((x) => String(x.name).includes(DATE_WORD));
+const menuById = () => Object.fromEntries(st.menu.map((m) => [m.id, m]));
+const dateOnly = (o) => { const mb = menuById(); return o.items.length > 0 && o.items.every((x) => isEventItem(x, mb)); };
 function payCard(o) {
   const t = trusted(o), mins = minsWaiting(o), late = mins >= UNPAID_WARN_MIN;
   return `<article class="card ord unpaid${late ? " late" : ""}"><div class="hd"><span class="who2">입금자명 <b>${esc(o.nick)}</b>${peopleText(o.people) ? " · " + esc(peopleText(o.people)) : ""}</span><span class="meta">${hhmm(o.createdAt)} · ${mins}분 전</span></div>
@@ -81,7 +82,7 @@ function menuTab() {
   <section class="sec"><h3>메뉴 <em>품절 체크는 바로 반영되고, 나머지는 저장을 눌러야 반영돼요</em></h3>`;
   if (!d.menu.length) h += '<button class="btn alt" data-act="seed">예시 메뉴 넣기</button>';
   h += d.menu.map((m, i) => `<div class="card"><div class="mrow"><label class="fld"><span>분류</span><input id="m-cat-${i}" data-f="m:cat" data-i="${i}" value="${esc(m.cat)}" maxlength="20"></label><label class="fld nmf"><span>메뉴 이름</span><input id="m-name-${i}" data-f="m:name" data-i="${i}" value="${esc(m.name)}" maxlength="40"></label><label class="fld"><span>가격(원)</span><input id="m-price-${i}" type="number" min="0" max="500000" step="500" data-f="m:price" data-i="${i}" value="${esc(m.price)}"></label>
-    <div class="acts"><label class="chk"><input id="m-sold-${i}" type="checkbox" data-f="m:soldout" data-i="${i}"${m.soldout ? " checked" : ""}> 품절</label><button class="btn ghost sm" data-act="mup" data-i="${i}" aria-label="위로">↑</button><button class="btn ghost sm" data-act="mdn" data-i="${i}" aria-label="아래로">↓</button><button class="btn ghost sm" data-act="mdel" data-i="${i}" style="color:var(--bad)">삭제</button></div></div></div>`).join("");
+    <div class="acts"><label class="chk"><input id="m-sold-${i}" type="checkbox" data-f="m:soldout" data-i="${i}"${m.soldout ? " checked" : ""}> 품절</label><label class="chk"><input id="m-ev-${i}" type="checkbox" data-f="m:event" data-i="${i}"${isEventMenu(m) ? " checked" : ""}${m.event !== true && isEventMenu(m) ? " disabled" : ""}> 소개팅(주방 제외)</label><button class="btn ghost sm" data-act="mup" data-i="${i}" aria-label="위로">↑</button><button class="btn ghost sm" data-act="mdn" data-i="${i}" aria-label="아래로">↓</button><button class="btn ghost sm" data-act="mdel" data-i="${i}" style="color:var(--bad)">삭제</button></div></div></div>`).join("");
   h += `<div class="row"><button class="btn alt" data-act="madd">+ 메뉴 추가</button></div></section>
   <div class="bar"><div><div class="tot"><small>저장하면 손님 화면이 바로 바뀌어요</small></div><button class="btn" data-act="save">저장</button></div></div>`;
   return h;
@@ -182,7 +183,7 @@ async function save() {
   const menu = d.menu.filter((m) => String(m.name).trim());
   if (!menu.length) return toast("메뉴가 하나 이상 있어야 해요");
   const obj = {};
-  menu.forEach((m, i) => { obj[m.id] = { cat: String(m.cat || "").trim().slice(0, 20) || "기타", name: String(m.name).trim().slice(0, 40), price: Math.max(0, Math.min(500000, parseInt(m.price) || 0)), soldout: !!m.soldout, order: i }; });
+  menu.forEach((m, i) => { obj[m.id] = { cat: String(m.cat || "").trim().slice(0, 20) || "기타", name: String(m.name).trim().slice(0, 40), price: Math.max(0, Math.min(500000, parseInt(m.price) || 0)), soldout: !!m.soldout, order: i }; if (m.event === true) obj[m.id].event = true; });
   // wipedAt(마지막으로 주문을 모두 지운 시각)은 손님 화면 초기화에 쓰여서 저장할 때 그대로 둬요.
   let cfg;
   try {
@@ -235,7 +236,7 @@ async function onField(e) {
   else if (f.startsWith("s:")) st.draft.cfg[f.slice(2)] = t.value;
   else if (f.startsWith("m:")) {
     const k = f.slice(2), m = st.draft.menu[+t.dataset.i];
-    m[k] = k === "price" ? Math.max(0, parseInt(t.value) || 0) : k === "soldout" ? t.checked : t.value;
+    m[k] = k === "price" ? Math.max(0, parseInt(t.value) || 0) : k === "soldout" || k === "event" ? t.checked : t.value;
     // 품절은 바로 반영해요. 아직 저장 전인 새 메뉴는 저장할 때 같이 반영돼요.
     if (k === "soldout" && st.menu.some((x) => x.id === m.id)) {
       try { await update(ref(db, "menu/" + m.id), { soldout: m.soldout }); } catch { toast("품절 표시를 바꾸지 못했어요"); }

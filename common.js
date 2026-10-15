@@ -38,6 +38,12 @@ export const DEFAULT_MENU = [
 export function menuArray(obj) {
   return Object.entries(obj || {}).map(([id, m]) => ({ id, ...m })).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
+// 소개팅(일촌 신청 등) 메뉴: 손님 메뉴판에서 따로 보이고, 주방 주문서에는 안 나가요.
+// 메뉴 편집에서 "소개팅(주방 제외)"를 체크했거나, 이름·분류에 아래 단어가 들어 있으면 해당돼요.
+const EVENT_WORDS = ["소개팅", "일촌"];
+export const isEventMenu = (m) => !!m && (m.event === true || EVENT_WORDS.some((w) => String(m.name || "").includes(w) || String(m.cat || "").includes(w)));
+// 주문에 담긴 항목은 분류가 없어서, 지금 메뉴에서 같은 id를 찾아 판단하고 없으면 이름으로 판단해요.
+export const isEventItem = (x, menuById = {}) => isEventMenu(menuById[x.id]) || isEventMenu({ name: x.name });
 export function categories(menu) {
   const c = [];
   menu.forEach((m) => { const k = m.cat || "기타"; if (!c.includes(k)) c.push(k); });

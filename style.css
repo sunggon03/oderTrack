@@ -211,3 +211,7 @@ table.rep tbody th,table.rep tfoot th{text-align:left}
 table.rep tfoot th,table.rep tfoot td{font-weight:900;background:var(--surface2)}
 .cin{width:84px;min-height:36px;font:inherit;font-size:14px;padding:4px 6px;text-align:right;border:2px solid var(--brown);border-radius:6px}
 @media print{@page{size:A4 landscape;margin:12mm}body.print-sum .report{box-shadow:none;border:0}body.print-sum .card:not(.report){display:none!important}body.print-sum .cin{border:0;width:auto;padding:0;background:none}body.print-sum .tblwrap{overflow:visible}body.print-sum table.rep{min-width:0;font-size:11pt}}
+.ticket .ttbl{font-family:var(--f-read);font-weight:900;font-size:56px;line-height:1;color:var(--brown-d);letter-spacing:-.02em}
+.ticket.late .ttbl{color:var(--bad)}
+.ticket .where .tno{font-size:inherit;font-weight:700;color:var(--muted2)}
+.ticket .tmeta{align-items:center}
