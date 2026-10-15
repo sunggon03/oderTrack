@@ -1,19 +1,28 @@
-import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, set, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, unitFor, hiddenFromKitchen, RULES_OLD_WARNING } from "./common.js?v=7";
+import { TABLE_PENDING, tableText, peopleText, db, auth, ref, onValue, update, runTransaction, serverTimestamp, serverNow, signOut, needLogin, $, esc, won, hhmm, toast, beep, clone, configured, setupWarning, menuArray, sumItems, ordersArray, watchConnection, keepAwake, DEFAULT_MENU, RULES_OLD_WARNING } from "./common.js?v=8";
 
 const app = $("#app");
 if (!configured) { setupWarning(app); throw new Error("firebase-config.js 미설정"); }
 
 const UNPAID_WARN_MIN = 5; // 입금 대기가 이 시간(분)을 넘으면 빨갛게 경고해요. 숫자만 바꾸면 돼요.
 
-const st = { orders: [], menu: [], cfg: { pub: "경영상회", tables: 12, bank: "", account: "", holder: "" }, tab: "pay", draft: null, costs: {}, reported: false, qrBase: "", confirmWipe: false, loaded: false, menuLoaded: false, cfgLoaded: false, err: "", rulesOld: false };
+const st = { orders: [], menu: [], costs: {}, cfg: { pub: "경영상회", tables: 12, bank: "", account: "", holder: "" }, tab: "pay", draft: null, qrBase: "", confirmWipe: false, loaded: false, menuLoaded: false, cfgLoaded: false, err: "", rulesOld: false };
 // 주소가 .../counter 로 열려도(.html 없이) 손님 페이지 주소가 맞게 나오도록 해요.
 st.qrBase = new URL("index.html", location.href).href.split(/[?#]/)[0];
 
 // 입금 확인 전에 직원이 입력 중인 테이블 번호(주문 id별). 화면이 다시 그려져도 지워지지 않게 따로 보관해요.
 const tblInput = {};
-// 원가 칸에 입력하는 중이면 화면을 다시 그리지 않아요(입력이 끊기는 것을 막아요).
-const typingCost = () => { const a = document.activeElement; return !!(a && a.dataset && String(a.dataset.f || "").startsWith("c:")); };
-const tableValue = (o) => (tblInput[o.id] ?? (o.table && o.table !== TABLE_PENDING ? o.table : "")).trim();
+// 같은 입금자명으로 이미 입금 확인된 주문이 있으면 그 테이블 번호를 미리 채워 줘요(직원이 바꿀 수 있어요).
+const normNick = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
+function prevTable(o) {
+  const k = normNick(o.nick); if (!k) return "";
+  let best = null;
+  st.orders.forEach((x) => {
+    if (x.id === o.id || (x.status !== "cooking" && x.status !== "done") || !x.table || x.table === TABLE_PENDING || normNick(x.nick) !== k) return;
+    if (!best || (x.paidAt || x.createdAt) > (best.paidAt || best.createdAt)) best = x;
+  });
+  return best ? best.table : "";
+}
+const tableValue = (o) => (tblInput[o.id] ?? (o.table && o.table !== TABLE_PENDING ? o.table : prevTable(o))).trim();
 const minsWaiting = (o) => Math.max(0, Math.floor((serverNow() - o.createdAt) / 60000));
 const isLate = (o) => o.status === "unpaid" && minsWaiting(o) >= UNPAID_WARN_MIN;
 
@@ -24,18 +33,19 @@ function trusted(o) {
   o.items.forEach((x) => { const m = byId[x.id]; if (m) t += m.price * x.qty; else { known = false; t += x.price * x.qty; } });
   return { amount: t, known, mismatch: t !== sumItems(o.items) || t !== o.total };
 }
-// 모든 메뉴가 "소개팅" 같은 주방 제외 분류인 주문은 주방을 거치지 않고 입금 확인과 동시에 완료 처리해요.
-function skipsKitchen(o) { const byId = Object.fromEntries(st.menu.map((m) => [m.id, m])); return o.items.length > 0 && o.items.every((x) => byId[x.id] && hiddenFromKitchen(byId[x.id].cat)); }
 function itemsHtml(items) { return `<ul class="lines">${items.map((x) => `<li><span>${esc(x.name)} × ${esc(x.qty)}</span><span>${won(x.price * x.qty)}</span></li>`).join("")}</ul>`; }
 
+// 메뉴 이름에 "소개팅"이 들어간 항목만 있는 주문: 입금 확인만 하고 테이블·주방은 건너뛰어요.
+const DATE_WORD = "소개팅";
+const dateOnly = (o) => o.items.length > 0 && o.items.every((x) => String(x.name).includes(DATE_WORD));
 function payCard(o) {
   const t = trusted(o), mins = minsWaiting(o), late = mins >= UNPAID_WARN_MIN;
   return `<article class="card ord unpaid${late ? " late" : ""}"><div class="hd"><span class="who2">입금자명 <b>${esc(o.nick)}</b>${peopleText(o.people) ? " · " + esc(peopleText(o.people)) : ""}</span><span class="meta">${hhmm(o.createdAt)} · ${mins}분 전</span></div>
   <div class="amount">${won(t.amount)}</div>${itemsHtml(o.items)}
   ${late ? `<p class="warn"><b>${mins}분째 입금 확인이 안 됐어요.</b> 은행 알림을 다시 보고, 입금이 없으면 테이블에 확인한 뒤 취소하세요.</p>` : ""}
   ${t.mismatch ? '<p class="warn">손님 화면의 금액과 현재 메뉴 가격이 달라요. 위 금액(현재 메뉴 가격)으로 확인하세요.</p>' : ""}
-  <label class="fld tblf"><span>테이블 번호 <em>(입금 확인할 때 꼭 입력)</em></span><input id="tb-${esc(o.id)}" data-f="tbl" data-id="${esc(o.id)}" value="${esc(tableValue(o))}" maxlength="10" autocomplete="off" enterkeyhint="done" placeholder="예: 3, 포장"></label>
-  <div class="row"><button class="btn ok" data-act="confirm" data-id="${esc(o.id)}">${skipsKitchen(o) ? "입금 확인 (주방 제외)" : "입금 확인 → 주방으로"}</button><button class="btn ghost sm" data-act="cancel" data-id="${esc(o.id)}">취소</button></div></article>`;
+  ${dateOnly(o) ? '<p class="note"><b>소개팅 주문이에요.</b> 테이블 번호 없이 입금 확인만 하면 돼요. 주방에는 전달되지 않아요.</p>' : `<label class="fld tblf"><span>테이블 번호 <em>${tblInput[o.id] === undefined && prevTable(o) ? "(같은 이름의 이전 주문 번호로 채웠어요 · 다르면 고치세요)" : "(입금 확인할 때 꼭 입력)"}</em></span><input id="tb-${esc(o.id)}" data-f="tbl" data-id="${esc(o.id)}" value="${esc(tableValue(o))}" maxlength="10" autocomplete="off" enterkeyhint="done" placeholder="예: 3, 포장"></label>`}
+  <div class="row"><button class="btn ok" data-act="confirm" data-id="${esc(o.id)}">${dateOnly(o) ? "입금 확인" : "입금 확인 → 주방으로"}</button><button class="btn ghost sm" data-act="cancel" data-id="${esc(o.id)}">취소</button></div></article>`;
 }
 function otherCard(o) {
   const lab = { cooking: "조리중", done: "완료", cancelled: "취소" }[o.status] || o.status;
@@ -51,7 +61,7 @@ function payTab() {
   return `<div class="pills"><span class="pill${un.length ? " hot" : ""}">입금 대기 ${un.length}</span>${late ? `<span class="pill bad">${UNPAID_WARN_MIN}분 넘음 ${late}</span>` : ""}<span class="pill">조리중 ${cook}</span></div>
   <section class="sec"><h3>입금 대기 <em>은행 알림의 입금자명·금액과 맞는지 확인 후 눌러 주세요</em></h3>
   ${un.length ? `<div class="grid">${un.map(payCard).join("")}</div>` : `<p class="note">${st.loaded ? "대기 중인 주문이 없어요." : "불러오는 중…"}</p>`}</section>
-  <p class="note" style="margin-top:18px">카운터는 소리가 나지 않아요(알림음은 주방 화면에서만). 5분 넘은 주문은 카드가 빨갛게 바뀌니 화면을 확인하세요. 같은 입금자명·금액의 주문이 여러 개면 시간 순서대로 확인하세요.</p>`;
+  <p class="note" style="margin-top:18px">새 주문 알림음은 이 화면을 한 번 터치하면 켜져요. 같은 입금자명·금액의 주문이 여러 개면 시간 순서대로 확인하세요.</p>`;
 }
 function allTab() {
   const rest = st.orders.filter((o) => o.status !== "unpaid").sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
@@ -68,7 +78,7 @@ function menuTab() {
   <label class="fld"><span>토스 송금 링크</span><input id="s-toss" data-f="s:tossLink" value="${esc(d.cfg.tossLink)}" placeholder="https://toss.me/내토스아이디" maxlength="120" inputmode="url" autocapitalize="off"></label>
   <label class="fld"><span>카카오페이 송금 링크</span><input id="s-kakao" data-f="s:kakaoLink" value="${esc(d.cfg.kakaoLink)}" placeholder="https://qr.kakaopay.com/..." maxlength="120" inputmode="url" autocapitalize="off"></label>
   <p class="note">비워 두면 버튼이 안 나오고 계좌 복사만 쓰여요. 링크는 계좌 주인이 토스·카카오페이 앱에서 만든 본인의 송금 링크만 넣으세요. 저장 전에 폰에서 직접 눌러 열리는지 꼭 확인해 주세요.</p></div>
-  <section class="sec"><h3>메뉴 <em>품절 체크는 바로 반영되고, 나머지는 저장을 눌러야 반영돼요. 분류가 주류면 "병", 메인·사이드·안주면 "인분", 그 밖은 "개"로 주방 주문서에 나와요</em></h3>`;
+  <section class="sec"><h3>메뉴 <em>품절 체크는 바로 반영되고, 나머지는 저장을 눌러야 반영돼요</em></h3>`;
   if (!d.menu.length) h += '<button class="btn alt" data-act="seed">예시 메뉴 넣기</button>';
   h += d.menu.map((m, i) => `<div class="card"><div class="mrow"><label class="fld"><span>분류</span><input id="m-cat-${i}" data-f="m:cat" data-i="${i}" value="${esc(m.cat)}" maxlength="20"></label><label class="fld nmf"><span>메뉴 이름</span><input id="m-name-${i}" data-f="m:name" data-i="${i}" value="${esc(m.name)}" maxlength="40"></label><label class="fld"><span>가격(원)</span><input id="m-price-${i}" type="number" min="0" max="500000" step="500" data-f="m:price" data-i="${i}" value="${esc(m.price)}"></label>
     <div class="acts"><label class="chk"><input id="m-sold-${i}" type="checkbox" data-f="m:soldout" data-i="${i}"${m.soldout ? " checked" : ""}> 품절</label><button class="btn ghost sm" data-act="mup" data-i="${i}" aria-label="위로">↑</button><button class="btn ghost sm" data-act="mdn" data-i="${i}" aria-label="아래로">↓</button><button class="btn ghost sm" data-act="mdel" data-i="${i}" style="color:var(--bad)">삭제</button></div></div></div>`).join("");
@@ -87,74 +97,37 @@ function qrTab() {
   if (!/^https?:\/\//.test(u)) return h;
   return h + `<div class="sec"><div class="qrs one"><div class="qr"><div class="box">${qrSvg(u)}</div>손님 주문 QR</div></div></div>`;
 }
-// ---- 정산: 메뉴별 판매·매출·원가·이익 ----
-// 원가는 손님이 읽을 수 있는 menu가 아니라 직원만 읽는 costs/<메뉴id> 에 저장해요. 값: { cost: 1개 만드는 데 드는 원가, stock: 준비한 수량(선택) }
-const nInt = (v, max) => Math.max(0, Math.min(max, parseInt(v) || 0));
 const pct = (a, b) => (b > 0 ? Math.round((a / b) * 1000) / 10 + "%" : "-");
-function report() {
-  const paid = st.orders.filter((o) => o.status === "cooking" || o.status === "done");
-  const byId = Object.fromEntries(st.menu.map((m) => [m.id, m]));
-  const rows = new Map();
-  st.menu.forEach((m) => rows.set(m.id, { id: m.id, name: m.name, price: m.price, qty: 0, rev: 0 }));
-  paid.forEach((o) => o.items.forEach((x) => {
-    const m = byId[x.id], key = m ? m.id : "x:" + x.name;
-    if (!rows.has(key)) rows.set(key, { id: key, name: x.name + (m ? "" : " (삭제된 메뉴)"), price: x.price, qty: 0, rev: 0 });
-    const r = rows.get(key); r.qty += x.qty; r.rev += (m ? m.price : x.price) * x.qty;
-  }));
-  let list = [...rows.values()].map((r) => {
-    const c = st.costs[r.id] || {}, hasCost = Number.isFinite(c.cost), cost = hasCost ? c.cost : 0, stock = Number.isFinite(c.stock) && c.stock > 0 ? c.stock : 0;
-    return { ...r, hasCost, cost, stock, cogs: cost * r.qty, profit: r.rev - cost * r.qty, prepCost: cost * stock };
-  });
-  const sold = list.filter((r) => r.qty > 0).sort((a, b) => b.rev - a.rev);
-  list = list.filter((r) => r.qty > 0 || r.stock > 0);
-  const tot = list.reduce((a, r) => ({ rev: a.rev + r.rev, cogs: a.cogs + r.cogs, profit: a.profit + r.profit, qty: a.qty + r.qty, prep: a.prep + r.prepCost }), { rev: 0, cogs: 0, profit: 0, qty: 0, prep: 0 });
-  const missing = sold.filter((r) => !r.hasCost).map((r) => r.name);
-  const hasStock = list.some((r) => r.stock > 0);
-  list.sort((a, b) => b.rev - a.rev);
-  return { paid, list, tot, missing, hasStock };
-}
+const num0 = (v) => Math.max(0, Math.min(99999999, Math.floor(Number(v) || 0)));
 function sumTab() {
-  if (!st.menuLoaded) return '<p class="note" style="margin-top:20px">메뉴를 불러오는 중이에요…</p>';
-  const R = report(), T = R.tot;
-  const costRows = st.menu.map((m, i) => { const c = st.costs[m.id] || {}; return `<tr><td>${esc(m.name)}</td><td class="r">${won(m.price)}</td>
-    <td><input class="inp cin" id="c-cost-${i}" data-f="c:cost" data-id="${esc(m.id)}" type="number" inputmode="numeric" min="0" max="500000" step="100" value="${Number.isFinite(c.cost) ? c.cost : ""}" placeholder="원" aria-label="${esc(m.name)} 원가(1개당, 원)"></td>
-    <td><input class="inp cin" id="c-stock-${i}" data-f="c:stock" data-id="${esc(m.id)}" type="number" inputmode="numeric" min="0" max="99999" step="1" value="${Number.isFinite(c.stock) ? c.stock : ""}" placeholder="개" aria-label="${esc(m.name)} 준비 수량(개)"></td></tr>`; }).join("");
-  const tr = (r) => `<tr><td>${esc(r.name)}</td><td class="r">${r.qty}</td><td class="r">${won(r.rev)}</td><td class="r">${r.hasCost ? won(r.cost) : "미입력"}</td><td class="r">${won(r.cogs)}</td><td class="r${r.profit < 0 ? " neg" : ""}">${won(r.profit)}</td><td class="r">${r.hasCost ? pct(r.cogs, r.rev) : "-"}</td>${R.hasStock ? `<td class="r">${r.stock ? r.stock : "-"}</td><td class="r">${r.stock ? pct(r.qty, r.stock) : "-"}</td>` : ""}</tr>`;
-  return `<div class="card noprint"><b>메뉴별 원가 입력 <span class="note">(입력하면 바로 저장돼요. 손님에게는 보이지 않아요)</span></b>
-    ${st.menu.length ? `<div class="tw"><table class="tbl2"><thead><tr><th>메뉴</th><th class="r">판매가</th><th>원가(1개당, 원)</th><th>준비 수량(선택)</th></tr></thead><tbody>${costRows}</tbody></table></div>` : '<p class="note">메뉴가 아직 없어요. 메뉴·계좌 탭에서 먼저 저장해 주세요.</p>'}
-    <p class="note">원가는 재료비를 1개 분량으로 나눈 금액이에요(예: 김치전 1장에 들어간 재료비). 준비 수량을 적으면 소진율(판매÷준비)과, 준비한 재료 전체 대비 매출 회수율이 표에 같이 나와요. 준비 수량은 안 적어도 돼요.</p></div>
-  <section class="report card" id="report"><div class="rhead"><b class="rtitle">${esc(st.cfg.pub)} 정산표</b><span class="note">${new Date().toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })} 기준 · 입금 확인된 주문(조리중·완료)만 집계</span></div>
-    <div class="sumgrid"><div class="kv"><span>주문 수</span><span>${R.paid.length}건</span></div><div class="kv"><span>판매 수량</span><span>${T.qty}개</span></div>
-    <div class="kv"><span>매출</span><span class="total">${won(T.rev)}</span></div><div class="kv"><span>판매분 원가</span><span>${won(T.cogs)}</span></div>
-    <div class="kv"><span>이익(매출−원가)</span><span class="total${T.profit < 0 ? " neg" : ""}">${won(T.profit)}</span></div><div class="kv"><span>원가율 · 이익률</span><span>${pct(T.cogs, T.rev)} · ${pct(T.profit, T.rev)}</span></div>
-    ${R.hasStock ? `<div class="kv"><span>준비한 재료 원가 합계</span><span>${won(T.prep)}</span></div><div class="kv"><span>재료 대비 매출 회수율</span><span>${pct(T.rev, T.prep)}</span></div>` : ""}</div>
-    ${R.missing.length ? `<p class="warn">원가가 입력되지 않은 메뉴: <b>${esc(R.missing.join(", "))}</b>. 이 메뉴의 원가를 0원으로 계산해서 이익이 실제보다 크게 나와요.</p>` : ""}
-    ${R.list.length ? `<div class="tw"><table class="tbl2"><thead><tr><th>메뉴</th><th class="r">판매</th><th class="r">매출</th><th class="r">원가(개당)</th><th class="r">총 원가</th><th class="r">이익</th><th class="r">원가율</th>${R.hasStock ? '<th class="r">준비</th><th class="r">소진율</th>' : ""}</tr></thead><tbody>${R.list.map(tr).join("")}</tbody>
-      <tfoot><tr><td>합계</td><td class="r">${T.qty}</td><td class="r">${won(T.rev)}</td><td></td><td class="r">${won(T.cogs)}</td><td class="r${T.profit < 0 ? " neg" : ""}">${won(T.profit)}</td><td class="r">${pct(T.cogs, T.rev)}</td>${R.hasStock ? "<td></td><td></td>" : ""}</tr></tfoot></table></div>` : '<p class="note">아직 판매된 메뉴가 없어요.</p>'}
-    <p class="note">재료비 외에 대여료·인건비·포장재·카드/송금 수수료·남은 재료 처리 등은 포함되지 않아요. 입금 확인 전 취소된 주문은 빠져요.</p>
-    <div class="row noprint"><button class="btn" data-act="pdf">PDF로 저장 (인쇄)</button><button class="btn alt" data-act="csv">엑셀용 CSV 저장</button></div>
-    <p class="note noprint">PDF: 열리는 인쇄 창에서 대상(프린터)을 <b>PDF로 저장</b>으로 고르세요. PC·안드로이드 크롬이 가장 안정적이에요. 폰에서 안 되면 CSV를 쓰세요.</p></section>
-  <div class="card noprint" style="margin-top:14px"><b>새 영업일 시작</b><p class="note">모든 주문과 주문번호를 지우고 1번부터 다시 시작해요. 입력해 둔 원가·준비 수량은 남아요. <b>정산표를 먼저 저장한 뒤에만</b> 누르세요. 되돌릴 수 없어요. 손님 폰에 남아 있던 "내 주문" 화면도 함께 초기화돼요.</p>
-  ${st.confirmWipe ? `${st.reported ? "" : '<p class="warn">이 화면에서 정산표(PDF·CSV)를 아직 저장하지 않았어요. 지우면 매출 내역이 사라져요.</p>'}<div class="row"><button class="btn danger" data-act="wipe">정말 ${st.orders.length}건 모두 지우기</button><button class="btn ghost" data-act="wipeNo">그만두기</button></div>` : '<button class="btn ghost" style="align-self:flex-start" data-act="wipeAsk">주문 모두 지우기</button>'}</div>`;
-}
-function exportCsv() {
-  const R = report(), q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
-  const head = ["메뉴", "판매수량", "매출", "원가(개당)", "총원가", "이익", "원가율(%)", "준비수량", "소진율(%)"];
-  const rows = R.list.map((r) => [r.name, r.qty, r.rev, r.hasCost ? r.cost : "", r.cogs, r.profit, r.rev > 0 && r.hasCost ? Math.round((r.cogs / r.rev) * 1000) / 10 : "", r.stock || "", r.stock ? Math.round((r.qty / r.stock) * 1000) / 10 : ""]);
-  rows.push(["합계", R.tot.qty, R.tot.rev, "", R.tot.cogs, R.tot.profit, R.tot.rev > 0 ? Math.round((R.tot.cogs / R.tot.rev) * 1000) / 10 : "", "", ""]);
-  const csv = "﻿" + [head, ...rows].map((r) => r.map(q).join(",")).join("\r\n");
-  const a = document.createElement("a"), d = new Date(), pad = (n) => String(n).padStart(2, "0");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  a.download = `정산_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.csv`;
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  st.reported = true;
-}
-function printReport() {
-  st.reported = true;
-  document.body.classList.add("print-report");
-  const done = () => { document.body.classList.remove("print-report"); window.removeEventListener("afterprint", done); };
-  window.addEventListener("afterprint", done);
-  setTimeout(() => { window.print(); setTimeout(done, 1500); }, 50); // 일부 브라우저는 afterprint가 안 와서 안전하게 한 번 더 정리해요
+  const paid = st.orders.filter((o) => o.status === "cooking" || o.status === "done");
+  const rows = {};
+  st.menu.forEach((m) => { rows[m.id] = { id: m.id, name: m.name, qty: 0, rev: 0 }; });
+  paid.forEach((o) => o.items.forEach((x) => { const r = rows[x.id] || (rows[x.id] = { id: x.id, name: x.name, qty: 0, rev: 0 }); r.qty += x.qty; r.rev += x.price * x.qty; }));
+  const list = Object.values(rows).sort((a, b) => b.rev - a.rev || a.name.localeCompare(b.name));
+  let rev = 0, cost = 0, stockCost = 0, qty = 0, stockQty = 0, sold4stock = 0;
+  const trs = list.map((r) => {
+    const c = st.costs[r.id] || {}, u = num0(c.cost), s = num0(c.stock);
+    const cs = u * r.qty; rev += r.rev; cost += cs; qty += r.qty; stockCost += u * s; stockQty += s; if (s) sold4stock += r.qty;
+    return `<tr><th scope="row">${esc(r.name)}</th><td>${r.qty}</td>
+      <td><input class="cin" type="number" min="0" inputmode="numeric" aria-label="${esc(r.name)} 준비 수량" data-f="c:stock" data-id="${esc(r.id)}" value="${s || ""}" placeholder="0"></td>
+      <td>${pct(r.qty, s)}</td><td>${won(r.rev)}</td>
+      <td><input class="cin" type="number" min="0" inputmode="numeric" aria-label="${esc(r.name)} 개당 원가" data-f="c:cost" data-id="${esc(r.id)}" value="${u || ""}" placeholder="0"></td>
+      <td>${won(cs)}</td><td>${won(r.rev - cs)}</td><td>${pct(cs, r.rev)}</td></tr>`;
+  }).join("");
+  const dt = new Date().toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+  return `<div class="card report"><b>정산 <span class="note">(입금 확인된 주문 기준 · ${dt})</span></b>
+  <p class="note noprint">준비 수량과 개당 원가를 입력하면 바로 저장돼요. 원가는 직원 계정으로만 볼 수 있어요.</p>
+  <div class="kv"><span>매출 합계</span><span class="total">${won(rev)}</span></div><div class="kv"><span>주문 수</span><span>${paid.length}건</span></div>
+  <div class="kv"><span>총 원가(판매분)</span><span>${won(cost)}</span></div><div class="kv"><span>이익(매출 − 원가)</span><span class="total">${won(rev - cost)}</span></div>
+  <div class="kv"><span>원가율(원가 ÷ 매출)</span><span>${pct(cost, rev)}</span></div>
+  <div class="kv"><span>준비한 재료 원가 대비 판매 원가</span><span>${stockCost ? won(cost) + " / " + won(stockCost) + " (" + pct(cost, stockCost) + ")" : "준비 수량 미입력"}</span></div>
+  <div class="tblwrap"><table class="rep"><thead><tr><th>메뉴</th><th>판매</th><th>준비</th><th>소진율</th><th>매출</th><th>개당 원가</th><th>원가 합</th><th>이익</th><th>원가율</th></tr></thead><tbody>${trs || '<tr><td colspan="9">메뉴가 없어요</td></tr>'}</tbody>
+  <tfoot><tr><th>합계</th><td>${qty}</td><td>${stockQty || "-"}</td><td>${pct(sold4stock, stockQty)}</td><td>${won(rev)}</td><td></td><td>${won(cost)}</td><td>${won(rev - cost)}</td><td>${pct(cost, rev)}</td></tr></tfoot></table></div>
+  <button class="btn noprint" style="align-self:flex-start" data-act="printSum">정산표 PDF로 저장</button>
+  <p class="note noprint">누르면 인쇄 창이 열려요. 대상(프린터)을 "PDF로 저장"으로 고르세요. 아이패드는 공유 → 인쇄 화면에서 두 손가락으로 벌려 PDF로 저장해요.</p></div>
+  <div class="card noprint" style="margin-top:14px"><b>새 영업일 시작</b><p class="note">모든 주문과 주문번호를 지우고 1번부터 다시 시작해요. 정산을 끝낸 뒤에만 누르세요. 되돌릴 수 없어요. 손님 폰에 남아 있던 "내 주문" 화면도 함께 초기화돼요.</p>
+  ${st.confirmWipe ? `<div class="row"><button class="btn danger" data-act="wipe">정말 ${st.orders.length}건 모두 지우기</button><button class="btn ghost" data-act="wipeNo">그만두기</button></div>` : '<button class="btn ghost" style="align-self:flex-start" data-act="wipeAsk">주문 모두 지우기</button>'}</div>`;
 }
 
 function render() {
@@ -176,18 +149,18 @@ const busy = new Set();
 async function confirmPay(id) {
   const o = st.orders.find((x) => x.id === id);
   if (!o || o.status !== "unpaid" || busy.has(id)) return;
-  const table = tableValue(o);
+  const only = dateOnly(o);
+  const table = only ? DATE_WORD : tableValue(o);
   if (!table) { toast("테이블 번호를 먼저 입력해 주세요"); const el = document.getElementById("tb-" + id); if (el) el.focus(); return; }
   busy.add(id);
   try {
     const r = await runTransaction(ref(db, "meta/seq"), (v) => (Number(v) || 0) + 1);
     const seq = r.snapshot.val();
-    const skip = skipsKitchen(o), s2 = skip ? "done" : "cooking";
-    const up = { [`orders/${id}/status`]: s2, [`orders/${id}/table`]: table, [`orders/${id}/paidAt`]: serverTimestamp(), [`orders/${id}/seq`]: seq, [`status/${id}`]: { s: s2, seq } };
-    if (skip) up[`orders/${id}/doneAt`] = serverTimestamp();
+    const up = { [`orders/${id}/status`]: only ? "done" : "cooking", [`orders/${id}/table`]: table, [`orders/${id}/paidAt`]: serverTimestamp(), [`orders/${id}/seq`]: seq, [`status/${id}`]: { s: "cooking", seq } };
+    if (only) up[`orders/${id}/doneAt`] = serverTimestamp(); // 주방에는 보이지 않게 바로 완료 처리
     await update(ref(db), up);
     delete tblInput[id];
-    toast(skip ? seq + "번 주문 입금 확인 완료 (주방에는 안 가요, " + tableText(table) + ")" : seq + "번 주문을 주방으로 보냈어요 (" + tableText(table) + ")");
+    toast(only ? seq + "번 소개팅 주문 입금을 확인했어요 (주방 전달 없음)" : seq + "번 주문을 주방으로 보냈어요 (" + tableText(table) + ")");
   } catch { toast("처리하지 못했어요. 다시 눌러 주세요"); }
   busy.delete(id);
 }
@@ -223,7 +196,8 @@ async function save() {
 async function wipe() {
   // 주문을 하나씩 지정해서 지워요(통째로 지우는 방식은 보안 규칙에 따라 거부될 수 있어요).
   Object.keys(tblInput).forEach((k) => delete tblInput[k]);
-  const up = { meta: null, "settings/wipedAt": serverTimestamp() };
+  // 주문번호와 응답 확인 값만 지워요. 원가(meta/costs)는 다음 영업일에도 남겨요.
+  const up = { "meta/seq": null, "meta/ping": null, "settings/wipedAt": serverTimestamp() };
   st.orders.forEach((o) => { up["orders/" + o.id] = null; up["status/" + o.id] = null; });
   try { await update(ref(db), up); toast("모두 지웠어요"); }
   catch (e) { toast("지우지 못했어요 (" + ((e && e.code) || "오류") + ")"); }
@@ -243,8 +217,7 @@ app.addEventListener("click", async (e) => {
   else if (a === "mup" || a === "mdn") { const m = st.draft.menu, j = a === "mup" ? i - 1 : i + 1; if (j >= 0 && j < m.length) { [m[i], m[j]] = [m[j], m[i]]; render(); } }
   else if (a === "save") save();
   else if (a === "print") window.print();
-  else if (a === "pdf") printReport();
-  else if (a === "csv") exportCsv();
+  else if (a === "printSum") { document.body.classList.add("print-sum"); window.addEventListener("afterprint", () => document.body.classList.remove("print-sum"), { once: true }); window.print(); }
   else if (a === "wipeAsk") { st.confirmWipe = true; render(); }
   else if (a === "wipeNo") { st.confirmWipe = false; render(); }
   else if (a === "wipe") { await wipe(); st.confirmWipe = false; render(); }
@@ -252,14 +225,11 @@ app.addEventListener("click", async (e) => {
 async function onField(e) {
   const t = e.target, f = t.dataset && t.dataset.f; if (!f) return;
   if (f === "tbl") tblInput[t.dataset.id] = t.value;
-  else if (f.startsWith("c:")) {
-    const k = f.slice(2), id = t.dataset.id, v = t.value.trim();
-    const cur = st.costs[id] || (st.costs[id] = {});
-    if (v === "") delete cur[k]; else cur[k] = nInt(v, k === "cost" ? 500000 : 99999);
-    if (e.type === "change") {   // 입력을 마치면 저장해요(입력하는 동안에는 저장하지 않아요)
-      const out = {}; if (Number.isFinite(cur.cost)) out.cost = cur.cost; if (Number.isFinite(cur.stock)) out.stock = cur.stock;
-      try { await set(ref(db, "costs/" + id), Object.keys(out).length ? out : null); } catch { toast("원가를 저장하지 못했어요. 다시 입력해 주세요"); }
-    }
+  else if (f === "c:cost" || f === "c:stock") {
+    if (e.type !== "change") return;
+    const id = t.dataset.id, cur = st.costs[id] || {}, v = num0(t.value), key = f.slice(2);
+    st.costs[id] = { cost: num0(cur.cost), stock: num0(cur.stock), [key]: v };
+    try { await update(ref(db, "meta/costs/" + id), { cost: st.costs[id].cost, stock: st.costs[id].stock }); render(); } catch { toast("저장하지 못했어요. 다시 입력해 주세요"); }
   }
   else if (f === "qrurl") { st.qrBase = t.value; if (e.type === "change") render(); }
   else if (f.startsWith("s:")) st.draft.cfg[f.slice(2)] = t.value;
@@ -277,21 +247,32 @@ app.addEventListener("change", onField);
 
 needLogin(app, (user, info) => {
   st.rulesOld = !!(info && info.rulesOld);
+  let first = true;
+  const warned = new Set(); // 이미 "N분 넘음" 경고음을 낸 주문
   onValue(ref(db, "orders"), (snap) => {
     const next = ordersArray(snap.val());
-    st.orders = next; st.loaded = true; st.err = "";
-    if (st.tab === "pay" || st.tab === "all" || (st.tab === "sum" && !typingCost())) render();
+    if (!first) {
+      const had = new Set(st.orders.filter((o) => o.status === "unpaid").map((o) => o.id));
+      if (next.some((o) => o.status === "unpaid" && !had.has(o.id))) beep();
+    }
+    first = false; st.orders = next; st.loaded = true; st.err = "";
+    const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("cin");
+    if ((st.tab === "pay" || st.tab === "all" || st.tab === "sum") && !typing) render();
   }, (err) => { st.err = err.code || "error"; render(); });
   onValue(ref(db, "menu"), (s) => { st.menu = menuArray(s.val()); const was = st.menuLoaded; st.menuLoaded = true; if (st.tab === "pay" || st.tab === "sum" || (st.tab === "menu" && !was)) render(); });
+  onValue(ref(db, "meta/costs"), (s) => {
+    const v = s.val() || {}, o = {};
+    Object.keys(v).forEach((k) => { if (v[k] && typeof v[k] === "object") o[k] = { cost: num0(v[k].cost), stock: num0(v[k].stock) }; });
+    st.costs = o; if (st.tab === "sum" && !(document.activeElement && document.activeElement.classList.contains("cin"))) render();
+  });
   onValue(ref(db, "settings"), (s) => { st.cfg = { ...st.cfg, ...(s.val() || {}) }; const was = st.cfgLoaded; st.cfgLoaded = true; if (st.tab === "qr" || (st.tab === "menu" && !was)) render(); });
-  onValue(ref(db, "costs"), (s) => {
-    const v = s.val(), o = {};
-    if (v && typeof v === "object") Object.entries(v).forEach(([id, c]) => { if (c && typeof c === "object") { const r = {}; if (Number.isFinite(c.cost)) r.cost = c.cost; if (Number.isFinite(c.stock)) r.stock = c.stock; o[id] = r; } });
-    st.costs = o;
-    if (st.tab === "sum" && !typingCost()) render();
-  }, () => {});
-  // 입금 대기 경과 시간 표시를 갱신해요(소리는 내지 않아요).
-  setInterval(() => { if (st.tab === "pay") render(); }, 20000);
+  // 경과 시간 표시를 갱신하고, 입금 대기가 오래된 주문이 생기면 한 번 알려요.
+  setInterval(() => {
+    const fresh = st.orders.filter((o) => isLate(o) && !warned.has(o.id));
+    fresh.forEach((o) => warned.add(o.id));
+    if (fresh.length) beep(330, 2);
+    if (st.tab === "pay") render();
+  }, 20000);
   watchConnection({ staff: true, role: "counter" });
   keepAwake();
   render();
